@@ -124,8 +124,10 @@ export default function HistoryScreen({ navigation }) {
         keyExtractor={item => item.id}
         renderItem={renderHistoryCard}
         ListEmptyComponent={renderEmptyState}
-        contentContainerStyle={[styles.listContainer, historyData.length === 0 && { flex: 1 }]}
+        // FIX: Replaced { flex: 1 } with flexGrow and justifyContent logic for the empty state
+        contentContainerStyle={historyData.length === 0 ? styles.emptyListContainer : styles.listContainer}
         showsVerticalScrollIndicator={false}
+        scrollEnabled={historyData.length > 0} 
       />
     </View>
   );
@@ -137,7 +139,11 @@ const styles = StyleSheet.create({
   headerTitle: { color: theme.textPrimary, fontSize: 28, fontWeight: 'bold' },
   clearButton: { padding: 8, marginRight: -8 },
   listContainer: { paddingHorizontal: 20, paddingBottom: 100 },
-  card: { backgroundColor: theme.surface, borderRadius: 15, padding: 20, marginBottom: 15 },
+  
+  // NEW: specific container style to strictly center the empty component
+  emptyListContainer: { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
+  
+  card: { backgroundColor: theme.surface, borderRadius: 15, padding: 20, marginBottom: 15, width: '100%' },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
   dateContainer: { flexDirection: 'row', alignItems: 'center' },
   dateText: { color: theme.textSecondary, fontSize: 14, fontWeight: '500' },
@@ -153,7 +159,9 @@ const styles = StyleSheet.create({
   cardFooter: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#222', paddingTop: 15, marginTop: 5 },
   footerItem: { flexDirection: 'row', alignItems: 'center', marginRight: 25 },
   footerText: { color: theme.textSecondary, fontSize: 14, marginLeft: 6 },
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: -50 },
+  
+  // FIX: Removed flex: 1 and margins here since the parent container now handles centering
+  emptyContainer: { alignItems: 'center', paddingBottom: 60 }, 
   emptyText: { color: theme.textPrimary, fontSize: 18, fontWeight: 'bold', marginTop: 15 },
   emptySubtext: { color: theme.textSecondary, fontSize: 14, marginTop: 8, textAlign: 'center', paddingHorizontal: 40 },
 });
