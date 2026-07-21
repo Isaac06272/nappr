@@ -9,6 +9,7 @@ import { theme } from '../theme/colors';
 
 const BACKGROUND_LOCATION_TASK = 'background-location-task';
 const STORAGE_KEY = '@nappr_saved_routes';
+const HISTORY_STORAGE_KEY = '@nappr_history'; // NEW: Added history key
 
 let backgroundNapSettings = null;
 
@@ -42,7 +43,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
 });
 
 export default function ActiveNapScreen({ route, navigation }) {
-  const { destination, radius } = route.params;
+  const { destination, radius } = route.params || { destination: { latitude: 0, longitude: 0 }, radius: 1 };
 
   const [currentDistance, setCurrentDistance] = useState(null);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
@@ -58,9 +59,9 @@ export default function ActiveNapScreen({ route, navigation }) {
   const locationSubscription = useRef(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
 
-  // SDK 56 Player Hook — expo-audio owns the native player's lifecycle.
-  // It auto-releases the player when this component unmounts, so we
-  // must NOT call player.pause() during unmount cleanup (see notes below).
+  // NEW: Keep track of exactly when tracking started
+  const startTimeRef = useRef(Date.now());
+
   const audioSource = require('../../assets/alarm.mp3');
   const player = useAudioPlayer(audioSource);
 
@@ -113,13 +114,6 @@ export default function ActiveNapScreen({ route, navigation }) {
 
     startTracking();
 
-    // IMPORTANT: Do NOT call stopAlarm()/player.pause() here.
-    // useAudioPlayer's own internal effect was declared before this one,
-    // so on unmount its cleanup (which releases the native player) runs
-    // BEFORE this cleanup does. Calling player.pause() after that point
-    // throws, because the underlying native player object no longer exists.
-    // expo-audio already stops playback automatically when the player
-    // is released, so there's nothing extra to do for the audio here.
     return () => {
       isMounted = false;
       if (locationSubscription.current) locationSubscription.current.remove();
@@ -155,9 +149,6 @@ export default function ActiveNapScreen({ route, navigation }) {
     ).start();
   };
 
-  // stopAlarm is only ever safe to call while the screen is still mounted
-  // (e.g. the user tapping "STOP ALARM" / "CANCEL NAP"). It is intentionally
-  // NOT called from the unmount cleanup above.
   const stopAlarm = () => {
     Vibration.cancel();
     try {
@@ -166,12 +157,48 @@ export default function ActiveNapScreen({ route, navigation }) {
         player.seekTo(0);
       }
     } catch (e) {
-      // Safe to ignore: the player may already be mid-teardown in some
-      // edge cases (e.g. fast refresh in dev). Playback is stopping either way.
+      // Safe to ignore
+    }
+  };
+
+  // NEW: Helper function to save the route to history
+  const saveToHistory = async (status) => {
+    try {
+      const endTime = Date.now();
+      const durationMs = endTime - startTimeRef.current;
+      const durationMinutes = Math.max(1, Math.round(durationMs / 60000)); 
+
+      const now = new Date();
+      const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const dateString = `${now.toLocaleDateString()} at ${timeString}`;
+
+      const historyEntry = {
+        id: Date.now().toString(),
+        date: dateString,
+        start: 'Current Location', // Defaulting to this since we aren't reverse-geocoding yet
+        destination: `Radius: ${radius.toFixed(1)}km`,
+        duration: `${durationMinutes} min`,
+        status: status
+      };
+
+      const existingHistory = await AsyncStorage.getItem(HISTORY_STORAGE_KEY);
+      const parsedHistory = existingHistory ? JSON.parse(existingHistory) : [];
+      const updatedHistory = [...parsedHistory, historyEntry];
+
+      await AsyncStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updatedHistory));
+    } catch (e) {
+      console.error("Failed to save history", e);
     }
   };
 
   const handleCancelNap = async () => {
+    // 1. Determine status: If the red screen is up, it's completed. Otherwise, cancelled.
+    const finalStatus = isAlarmActive ? 'Completed' : 'Cancelled';
+    
+    // 2. Save it to history
+    await saveToHistory(finalStatus);
+
+    // 3. Stop everything else
     stopAlarm();
     backgroundNapSettings = null;
     hasTriggeredRef.current = false;
@@ -220,9 +247,7 @@ export default function ActiveNapScreen({ route, navigation }) {
 
   return (
     <Animated.View style={[styles.container, { backgroundColor }]}>
-
       <View style={styles.mainContent}>
-
         <View style={styles.header}>
           <TouchableOpacity onPress={handleCancelNap} style={styles.iconButtonSmall}>
             <Ionicons name="arrow-back" size={24} color="#666" />
@@ -247,7 +272,6 @@ export default function ActiveNapScreen({ route, navigation }) {
         <View style={styles.moonContainer}>
           <Ionicons name="moon-outline" size={120} color="#1A1A1A" />
         </View>
-
       </View>
 
       <View style={styles.bottomSection}>
@@ -313,7 +337,6 @@ export default function ActiveNapScreen({ route, navigation }) {
           </View>
         </View>
       </Modal>
-
     </Animated.View>
   );
 }

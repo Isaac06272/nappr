@@ -1,17 +1,59 @@
-import React from 'react';
-import { StyleSheet, View, Text, FlatList, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { theme } from '../theme/colors';
 
-// Mock data to show what a populated history looks like
-const NAP_HISTORY = [
-  { id: '1', date: 'Today, 8:30 AM', start: 'Obando', destination: 'PUP Manila', duration: '45 min', status: 'Completed' },
-  { id: '2', date: 'Yesterday, 5:15 PM', start: 'PUP Manila', destination: 'Obando', duration: '55 min', status: 'Completed' },
-  { id: '3', date: 'Mon, 7:00 AM', start: 'Home', destination: 'LRT Monumento', duration: '20 min', status: 'Cancelled' },
-  { id: '4', date: 'Fri, 9:00 PM', start: 'SM North', destination: 'Home', duration: '35 min', status: 'Completed' },
-];
+const HISTORY_STORAGE_KEY = '@nappr_history';
 
-export default function HistoryScreen() {
+export default function HistoryScreen({ navigation }) {
+  const [historyData, setHistoryData] = useState([]);
+
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const storedHistory = await AsyncStorage.getItem(HISTORY_STORAGE_KEY);
+        if (storedHistory) {
+          const parsedHistory = JSON.parse(storedHistory);
+          setHistoryData(parsedHistory.reverse());
+        }
+      } catch (e) {
+        console.error("Failed to load nap history:", e);
+      }
+    };
+
+    loadHistory();
+
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadHistory();
+    });
+
+    return unsubscribe;
+  }, [navigation]);
+
+  // NEW: The function to wipe the storage completely
+  const handleClearHistory = () => {
+    Alert.alert(
+      "Clear History",
+      "Are you sure you want to delete all your nap history? This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await AsyncStorage.removeItem(HISTORY_STORAGE_KEY);
+              setHistoryData([]); // Instantly clear the screen
+            } catch (e) {
+              Alert.alert("Error", "Failed to clear history.");
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const renderHistoryCard = ({ item }) => {
     const isCompleted = item.status === 'Completed';
 
@@ -37,7 +79,7 @@ export default function HistoryScreen() {
           </View>
           <View style={styles.routeDetails}>
             <Text style={styles.locationText}>{item.start}</Text>
-            <View style={{ height: 15 }} /> {/* Spacing */}
+            <View style={{ height: 15 }} /> 
             <Text style={styles.locationText}>{item.destination}</Text>
           </View>
         </View>
@@ -50,14 +92,32 @@ export default function HistoryScreen() {
     );
   };
 
+  const renderEmptyState = () => (
+    <View style={styles.emptyContainer}>
+      <Ionicons name="moon" size={60} color="#222" />
+      <Text style={styles.emptyText}>No naps recorded yet.</Text>
+      <Text style={styles.emptySubtext}>Your completed and cancelled naps will appear here.</Text>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
-      <Text style={styles.headerTitle}>Nap History</Text>
+      {/* NEW: Updated Header with a Trash Icon */}
+      <View style={styles.headerRow}>
+        <Text style={styles.headerTitle}>Nap History</Text>
+        {historyData.length > 0 && (
+          <TouchableOpacity onPress={handleClearHistory} style={styles.clearButton} activeOpacity={0.6}>
+            <Ionicons name="trash-outline" size={24} color={theme.danger} />
+          </TouchableOpacity>
+        )}
+      </View>
+
       <FlatList 
-        data={NAP_HISTORY}
+        data={historyData}
         keyExtractor={item => item.id}
         renderItem={renderHistoryCard}
-        contentContainerStyle={styles.listContainer}
+        ListEmptyComponent={renderEmptyState}
+        contentContainerStyle={[styles.listContainer, historyData.length === 0 && { flex: 1 }]}
         showsVerticalScrollIndicator={false}
       />
     </View>
@@ -66,7 +126,12 @@ export default function HistoryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.background, paddingTop: 60 },
-  headerTitle: { color: theme.textPrimary, fontSize: 28, fontWeight: 'bold', paddingHorizontal: 20, marginBottom: 20 },
+  
+  // Updated header styles to position the button
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 20 },
+  headerTitle: { color: theme.textPrimary, fontSize: 28, fontWeight: 'bold' },
+  clearButton: { padding: 8, marginRight: -8 },
+
   listContainer: { paddingHorizontal: 20, paddingBottom: 100 },
   card: { backgroundColor: theme.surface, borderRadius: 15, padding: 20, marginBottom: 15 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
@@ -83,4 +148,7 @@ const styles = StyleSheet.create({
   locationText: { color: theme.textPrimary, fontSize: 16, fontWeight: '600' },
   cardFooter: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#222', paddingTop: 15, marginTop: 5 },
   durationText: { color: theme.textSecondary, fontSize: 14, marginLeft: 5 },
+  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: -50 },
+  emptyText: { color: theme.textPrimary, fontSize: 18, fontWeight: 'bold', marginTop: 15 },
+  emptySubtext: { color: theme.textSecondary, fontSize: 14, marginTop: 8, textAlign: 'center', paddingHorizontal: 40 },
 });
