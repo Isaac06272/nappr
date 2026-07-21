@@ -10,10 +10,10 @@ import { theme } from '../theme/colors';
 const BACKGROUND_LOCATION_TASK = 'background-location-task';
 const STORAGE_KEY = '@nappr_saved_routes';
 const HISTORY_STORAGE_KEY = '@nappr_history';
+const SETTINGS_STORAGE_KEY = '@nappr_settings';
 
 let backgroundNapSettings = null;
 
-// The Offline Backup: Haversine straight-line distance
 const getOfflineDistanceKm = (lat1, lon1, lat2, lon2) => {
   const R = 6371;
   const dLat = (lat2 - lat1) * (Math.PI / 180);
@@ -24,7 +24,6 @@ const getOfflineDistanceKm = (lat1, lon1, lat2, lon2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-// The Live API: Exact same OSRM call from your Dashboard
 const getLiveDrivingDistanceKm = async (lat1, lon1, lat2, lon2) => {
   try {
     const url = `https://router.project-osrm.org/route/v1/driving/${lon1},${lat1};${lon2},${lat2}?overview=false`;
@@ -45,14 +44,17 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   if (data && backgroundNapSettings) {
     const { locations } = data;
     const latestLocation = locations[0];
-    const { destination, radius, vibrateEnabled } = backgroundNapSettings;
+    const { destination, radius, vibrateEnabled, offlineMode } = backgroundNapSettings;
 
-    let dist = await getLiveDrivingDistanceKm(
-      latestLocation.coords.latitude, latestLocation.coords.longitude,
-      destination.latitude, destination.longitude
-    );
+    let dist = null;
+    // Skip API if offline mode is enabled
+    if (!offlineMode) {
+      dist = await getLiveDrivingDistanceKm(
+        latestLocation.coords.latitude, latestLocation.coords.longitude,
+        destination.latitude, destination.longitude
+      );
+    }
 
-    // Fallback to offline math if the internet drops
     if (dist === null) {
       dist = getOfflineDistanceKm(
         latestLocation.coords.latitude, latestLocation.coords.longitude,
@@ -76,6 +78,10 @@ export default function ActiveNapScreen({ route, navigation }) {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [vibrateEnabled, setVibrateEnabled] = useState(true);
 
+  // Global settings state
+  const [offlineMode, setOfflineMode] = useState(false);
+  const [gradualVolume, setGradualVolume] = useState(true);
+
   const [isSaveModalVisible, setIsSaveModalVisible] = useState(false);
   const [routeName, setRouteName] = useState('');
   const [startName, setStartName] = useState('');
@@ -83,6 +89,7 @@ export default function ActiveNapScreen({ route, navigation }) {
 
   const locationSubscription = useRef(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
+  const volumeIntervalRef = useRef(null); // Tracks the fade-in volume timer
 
   const startTimeRef = useRef(Date.now());
   const startCoordsRef = useRef(null);
@@ -91,17 +98,35 @@ export default function ActiveNapScreen({ route, navigation }) {
   const player = useAudioPlayer(audioSource);
 
   const hasTriggeredRef = useRef(false);
-  const settingsRef = useRef({ sound: true, vibrate: true });
+  const settingsRef = useRef({ sound: true, vibrate: true, gradualVolume: true });
 
   useEffect(() => {
-    settingsRef.current = { sound: soundEnabled, vibrate: vibrateEnabled };
-    backgroundNapSettings = { destination, radius, vibrateEnabled, soundEnabled };
-  }, [destination, radius, vibrateEnabled, soundEnabled]);
+    settingsRef.current = { sound: soundEnabled, vibrate: vibrateEnabled, gradualVolume };
+    backgroundNapSettings = { destination, radius, vibrateEnabled, soundEnabled, offlineMode };
+  }, [destination, radius, vibrateEnabled, soundEnabled, offlineMode, gradualVolume]);
 
   useEffect(() => {
     let isMounted = true;
 
-    const startTracking = async () => {
+    const initTracking = async () => {
+      // 1. Load settings before starting the GPS
+      let isOffline = false;
+      let isGradual = true;
+      try {
+        const storedSettings = await AsyncStorage.getItem(SETTINGS_STORAGE_KEY);
+        if (storedSettings) {
+          const parsed = JSON.parse(storedSettings);
+          isOffline = parsed.offlineMode || false;
+          isGradual = parsed.gradualVolume !== false; 
+          if (isMounted) {
+            setOfflineMode(isOffline);
+            setGradualVolume(isGradual);
+          }
+        }
+      } catch (e) {
+        console.log("Failed to fetch settings");
+      }
+
       const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
       if (foregroundStatus !== 'granted') return;
 
@@ -111,16 +136,22 @@ export default function ActiveNapScreen({ route, navigation }) {
       try {
         const initialLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         startCoordsRef.current = initialLoc.coords;
-        let initialDist = await getLiveDrivingDistanceKm(
-            initialLoc.coords.latitude, initialLoc.coords.longitude,
-            destination.latitude, destination.longitude
-        );
+        let initialDist = null;
+        
+        if (!isOffline) {
+          initialDist = await getLiveDrivingDistanceKm(
+              initialLoc.coords.latitude, initialLoc.coords.longitude,
+              destination.latitude, destination.longitude
+          );
+        }
+
         if (initialDist === null) {
             initialDist = getOfflineDistanceKm(
                 initialLoc.coords.latitude, initialLoc.coords.longitude,
                 destination.latitude, destination.longitude
             );
         }
+
         if (isMounted) {
             setCurrentDistance(initialDist);
             if (initialDist <= radius && !hasTriggeredRef.current) {
@@ -139,10 +170,13 @@ export default function ActiveNapScreen({ route, navigation }) {
             startCoordsRef.current = newLocation.coords;
           }
 
-          let dist = await getLiveDrivingDistanceKm(
-            newLocation.coords.latitude, newLocation.coords.longitude,
-            destination.latitude, destination.longitude
-          );
+          let dist = null;
+          if (!isOffline) {
+            dist = await getLiveDrivingDistanceKm(
+              newLocation.coords.latitude, newLocation.coords.longitude,
+              destination.latitude, destination.longitude
+            );
+          }
 
           if (dist === null) {
             dist = getOfflineDistanceKm(
@@ -173,12 +207,13 @@ export default function ActiveNapScreen({ route, navigation }) {
     };
 
     if (destination?.latitude) {
-        startTracking();
+        initTracking();
     }
 
     return () => {
       isMounted = false;
       if (locationSubscription.current) locationSubscription.current.remove();
+      if (volumeIntervalRef.current) clearInterval(volumeIntervalRef.current);
       Vibration.cancel();
     };
   }, []);
@@ -186,7 +221,7 @@ export default function ActiveNapScreen({ route, navigation }) {
   const triggerAlarm = () => {
     setIsAlarmActive(true);
 
-    const { vibrate, sound } = settingsRef.current;
+    const { vibrate, sound, gradualVolume: shouldRampVolume } = settingsRef.current;
     const repeatSetting = Platform.OS === 'ios' ? true : 0;
 
     if (vibrate) {
@@ -196,8 +231,27 @@ export default function ActiveNapScreen({ route, navigation }) {
     if (sound && player) {
       try {
         player.loop = true;
-        player.seekTo(0);
-        player.play();
+        
+        if (shouldRampVolume) {
+          player.volume = 0; // Start silently
+          player.seekTo(0);
+          player.play();
+          
+          let currentVol = 0;
+          volumeIntervalRef.current = setInterval(() => {
+            currentVol += 0.1;
+            if (currentVol >= 1.0) {
+              player.volume = 1.0;
+              clearInterval(volumeIntervalRef.current);
+            } else {
+              player.volume = currentVol;
+            }
+          }, 1000); // Increases by 10% every second
+        } else {
+          player.volume = 1.0; // Blast immediately
+          player.seekTo(0);
+          player.play();
+        }
       } catch (playError) {
         console.error("Audio playback error:", playError);
       }
@@ -213,6 +267,7 @@ export default function ActiveNapScreen({ route, navigation }) {
 
   const stopAlarm = () => {
     Vibration.cancel();
+    if (volumeIntervalRef.current) clearInterval(volumeIntervalRef.current);
     try {
       if (player && typeof player.pause === 'function') {
         player.pause();
