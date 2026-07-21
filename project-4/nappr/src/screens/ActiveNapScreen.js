@@ -372,9 +372,11 @@ export default function ActiveNapScreen({ route, navigation }) {
   };
 
   const displayDistance = currentDistance !== null ? currentDistance.toFixed(1) : "--";
+  
+  // CHANGED: Interpolating to a soft mint glow instead of red
   const backgroundColor = pulseAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: ['#000000', 'rgba(255, 30, 30, 0.4)']
+    outputRange: ['#000000', 'rgba(0, 245, 212, 0.35)']
   });
 
   return (
@@ -384,7 +386,8 @@ export default function ActiveNapScreen({ route, navigation }) {
           <TouchableOpacity onPress={handleCancelNap} style={styles.iconButtonSmall}>
             <Ionicons name="arrow-back" size={24} color="#666" />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, isAlarmActive && { color: theme.danger }]}>
+          {/* CHANGED: Text color uses theme.accentMint when alarm is active */}
+          <Text style={[styles.headerTitle, isAlarmActive && { color: theme.accentMint }]}>
             {isAlarmActive ? "WAKE UP!" : "APPROACHING"}
           </Text>
           <TouchableOpacity onPress={() => setIsSaveModalVisible(true)} style={styles.iconButtonSmall}>
@@ -413,7 +416,8 @@ export default function ActiveNapScreen({ route, navigation }) {
         </View>
         <View style={styles.bottomContainer}>
           <TouchableOpacity onPress={handleCancelNap} activeOpacity={0.6}>
-            <Text style={[styles.cancelText, isAlarmActive && { color: theme.danger }]}>
+            {/* CHANGED: Text color uses theme.accentMint when alarm is active */}
+            <Text style={[styles.cancelText, isAlarmActive && { color: theme.accentMint }]}>
               {isAlarmActive ? "STOP ALARM" : "CANCEL NAP"}
             </Text>
           </TouchableOpacity>
