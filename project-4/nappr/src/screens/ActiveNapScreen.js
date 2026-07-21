@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Vibration, Animated, Modal, TextInput, Alert } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Vibration, Animated, Modal, TextInput, Alert, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Audio } from 'expo-av';
+import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { theme } from '../theme/colors';
 
 const BACKGROUND_LOCATION_TASK = 'background-location-task';
@@ -22,7 +22,6 @@ const getDistanceKm = (lat1, lon1, lat2, lon2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-// BACKGROUND TASK
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
   if (error) return;
   if (data && backgroundNapSettings) {
@@ -36,7 +35,8 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
     );
 
     if (dist <= radius) {
-      if (vibrateEnabled) Vibration.vibrate([0, 1000, 500], true); 
+      const repeatSetting = Platform.OS === 'ios' ? true : 0;
+      if (vibrateEnabled) Vibration.vibrate([0, 1000, 500], repeatSetting); 
     }
   }
 });
@@ -57,20 +57,19 @@ export default function ActiveNapScreen({ route, navigation }) {
   
   const locationSubscription = useRef(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
-  const soundRef = useRef(null); 
 
-  // THE FIX: Refs bypass the React render cycle, stopping the instant-cancel bug.
+  // NEW: Initialize the expo-audio player hook
+  const audioSource = require('../../assets/alarm.mp3');
+  const player = useAudioPlayer(audioSource);
+
   const hasTriggeredRef = useRef(false);
   const settingsRef = useRef({ sound: true, vibrate: true });
 
-  // Keep refs and background tasks synced with the latest UI toggles
   useEffect(() => {
     settingsRef.current = { sound: soundEnabled, vibrate: vibrateEnabled };
     backgroundNapSettings = { destination, radius, vibrateEnabled, soundEnabled };
   }, [destination, radius, vibrateEnabled, soundEnabled]);
 
-  // INITIALIZE TRACKING 
-  // Notice the empty [] at the end. This prevents the tracker from refreshing and killing the alarm!
   useEffect(() => {
     let isMounted = true;
 
@@ -91,7 +90,6 @@ export default function ActiveNapScreen({ route, navigation }) {
           
           setCurrentDistance(dist);
           
-          // Trigger alarm ONLY if it hasn't triggered yet
           if (dist <= radius && !hasTriggeredRef.current) {
             hasTriggeredRef.current = true;
             triggerAlarm();
@@ -116,38 +114,31 @@ export default function ActiveNapScreen({ route, navigation }) {
     return () => {
       isMounted = false;
       if (locationSubscription.current) locationSubscription.current.remove();
-      // stopAlarm() now ONLY runs when you physically leave the screen, not during a UI refresh.
       stopAlarm(); 
     };
   }, []); 
 
-  // ALARM LOGIC 
   const triggerAlarm = async () => {
-    setIsAlarmActive(true); // Tell UI to flash red
+    setIsAlarmActive(true); 
     
-    // Read directly from the Ref so it doesn't wait for a React render
     const { vibrate, sound } = settingsRef.current;
+    const repeatSetting = Platform.OS === 'ios' ? true : 0;
 
     if (vibrate) {
-      Vibration.vibrate([0, 1000, 500], true); 
+      Vibration.vibrate([0, 1000, 500], repeatSetting); 
     }
 
-    if (sound) {
+    if (sound && player) {
       try {
-        await Audio.setAudioModeAsync({
-          playsInSilentModeIOS: true,
-          staysActiveInBackground: true,
-          shouldDuckAndroid: true,
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          interruptionMode: 'duck',
         });
-
-        const { sound: audioObject } = await Audio.Sound.createAsync(
-          require('../../assets/alarm.mp3') 
-        );
-        soundRef.current = audioObject;
-        await audioObject.setIsLoopingAsync(true);
-        await audioObject.playAsync();
-      } catch (error) {
-        console.error("Failed to play the alarm sound:", error);
+        
+        player.loop = true;
+        player.play();
+      } catch (playError) {
+        console.error("Audio playback error:", playError);
       }
     }
 
@@ -161,10 +152,13 @@ export default function ActiveNapScreen({ route, navigation }) {
 
   const stopAlarm = async () => {
     Vibration.cancel();
-    if (soundRef.current) {
-      await soundRef.current.stopAsync();
-      await soundRef.current.unloadAsync();
-      soundRef.current = null;
+    if (player) {
+      try {
+        player.pause();
+        player.seekTo(0);
+      } catch (e) {
+        console.log("Cleanup note:", e);
+      }
     }
   };
 
@@ -257,8 +251,6 @@ export default function ActiveNapScreen({ route, navigation }) {
             <Ionicons name={vibrateEnabled ? "phone-portrait" : "phone-portrait-outline"} size={26} color={vibrateEnabled ? '#666' : '#222'} />
           </TouchableOpacity>
         </View>
-
-        {/* Test button safely removed since we verified hardware works! */}
 
         <View style={styles.bottomContainer}>
           <TouchableOpacity onPress={handleCancelNap} activeOpacity={0.6}>

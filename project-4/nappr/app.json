@@ -42,6 +42,12 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Allow Nappr to read your location in the background so the alarm can wake you up even when your phone is asleep."
         }
+      ],
+      [
+        "expo-audio",
+        {
+          "enableBackgroundPlayback": true
+        }
       ]
     ]
   }
