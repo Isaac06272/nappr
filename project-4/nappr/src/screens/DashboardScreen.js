@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Text, TextInput, Switch, TouchableOpacity, ScrollView, Keyboard, Animated } from 'react-native';
+import { StyleSheet, View, Text, TextInput, Switch, TouchableOpacity, ScrollView, Keyboard, Animated, ActivityIndicator } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -24,6 +24,7 @@ export default function DashboardScreen({ navigation }) {
   const [routeInfo, setRouteInfo] = useState({ distance: 0, duration: 0 });
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false); 
   
   const abortControllerRef = useRef(null);
   const isSelectingRef = useRef(false); 
@@ -58,8 +59,9 @@ export default function DashboardScreen({ navigation }) {
         fetchSearchResults(searchQuery);
       } else {
         setSearchResults([]);
+        setIsSearching(false);
       }
-    }, 1500); 
+    }, 600); 
 
     return () => clearTimeout(delayDebounceFn);
   }, [searchQuery]);
@@ -73,19 +75,32 @@ export default function DashboardScreen({ navigation }) {
       
       const response = await fetch(url, { signal, headers: { 'User-Agent': 'NapprApp_Radar/1.0' } });
 
-      if (response.status === 429 || !response.ok) return;
+      if (response.status === 429 || !response.ok) {
+        setIsSearching(false);
+        return;
+      }
 
       const data = await response.json();
-      if (!signal.aborted && Array.isArray(data)) setSearchResults(data);
+      if (!signal.aborted) {
+        if (Array.isArray(data)) setSearchResults(data);
+        setIsSearching(false);
+      }
     } catch (error) {
-      if (error.name !== 'AbortError') setSearchResults([]);
+      if (error.name !== 'AbortError') {
+        setSearchResults([]);
+        setIsSearching(false);
+      }
     }
   };
 
   const selectPlace = (place) => {
     Keyboard.dismiss();
     isSelectingRef.current = true; 
-    setSearchQuery(place.name || place.display_name.split(',')[0]);
+    setIsSearching(false);
+    
+    const cleanName = place.name || place.display_name.split(',')[0];
+    
+    setSearchQuery(cleanName);
     setSearchResults([]); 
     setPointB({
       latitude: parseFloat(place.lat),
@@ -191,15 +206,26 @@ export default function DashboardScreen({ navigation }) {
             placeholder="Search destination..."
             placeholderTextColor={theme.textSecondary}
             value={searchQuery}
-            onChangeText={(text) => setSearchQuery(text)} 
+            // FIX: Turn on the spinner immediately as you type
+            onChangeText={(text) => {
+              setSearchQuery(text);
+              if (text.length > 2 && !isSelectingRef.current) {
+                setIsSearching(true);
+              } else {
+                setIsSearching(false);
+              }
+            }} 
           />
           
-          {searchQuery.length > 0 ? (
+          {isSearching ? (
+             <ActivityIndicator size="small" color={theme.accentMint} style={{ padding: 5 }} />
+          ) : searchQuery.length > 0 ? (
             <TouchableOpacity 
                 onPress={() => {
                 isSelectingRef.current = true;
                 setSearchQuery('');
                 setSearchResults([]); 
+                setIsSearching(false);
                 setTimeout(() => { isSelectingRef.current = false; }, 500);
                 }}
                 style={{ padding: 5 }}
@@ -211,19 +237,34 @@ export default function DashboardScreen({ navigation }) {
 
         {searchResults.length > 0 ? (
         <View style={styles.dropdown}>
-            <ScrollView keyboardShouldPersistTaps="handled">
-            {searchResults.map((place, index) => (
-                <TouchableOpacity 
-                key={index} 
-                style={styles.dropdownItem}
-                onPress={() => selectPlace(place)}
-                >
-                <Ionicons name="location-outline" size={16} color={theme.accentMint} style={{marginRight: 10}} />
-                <Text style={styles.dropdownText} numberOfLines={1}>
-                    {place.display_name}
-                </Text>
-                </TouchableOpacity>
-            ))}
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            {searchResults.map((place, index) => {
+                const parts = place.display_name.split(',');
+                const mainName = place.name || parts[0];
+                const subName = parts.slice(1).join(',').trim();
+
+                return (
+                  <TouchableOpacity 
+                  key={index} 
+                  style={[styles.dropdownItem, index === searchResults.length - 1 && { borderBottomWidth: 0 }]}
+                  onPress={() => selectPlace(place)}
+                  >
+                  <View style={styles.dropdownIconContainer}>
+                      <Ionicons name="location" size={18} color={theme.accentMint} />
+                  </View>
+                  <View style={styles.dropdownTextContainer}>
+                      <Text style={styles.dropdownMainText} numberOfLines={1}>
+                          {mainName}
+                      </Text>
+                      {subName ? (
+                          <Text style={styles.dropdownSubText} numberOfLines={1}>
+                              {subName}
+                          </Text>
+                      ) : null}
+                  </View>
+                  </TouchableOpacity>
+                );
+            })}
             </ScrollView>
         </View>
         ) : null}
@@ -366,9 +407,14 @@ const styles = StyleSheet.create({
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.surface, marginHorizontal: 20, borderRadius: 25, paddingHorizontal: 15, height: 50, marginBottom: 10 },
   searchIcon: { marginRight: 10 },
   searchInput: { flex: 1, color: theme.textPrimary, fontSize: 16 },
-  dropdown: { position: 'absolute', top: 65, left: 20, right: 20, backgroundColor: theme.surface, borderRadius: 15, padding: 10, shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 10, elevation: 10, maxHeight: 200 },
-  dropdownItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#333' },
-  dropdownText: { color: theme.textPrimary, fontSize: 14, flex: 1 },
+  
+  // NEW: Sleeker Dropdown UI Styles
+  dropdown: { position: 'absolute', top: 65, left: 20, right: 20, backgroundColor: '#1A1A1A', borderRadius: 15, padding: 5, shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 10, elevation: 10, maxHeight: 260, borderWidth: 1, borderColor: '#333' },
+  dropdownItem: { flexDirection: 'row', alignItems: 'center', padding: 12, borderBottomWidth: 1, borderBottomColor: '#2A2A2A' },
+  dropdownIconContainer: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0, 245, 212, 0.1)', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  dropdownTextContainer: { flex: 1, justifyContent: 'center' },
+  dropdownMainText: { color: theme.textPrimary, fontSize: 15, fontWeight: 'bold', marginBottom: 2 },
+  dropdownSubText: { color: theme.textSecondary, fontSize: 12 },
   
   // === RADAR CONTAINER ===
   radarWrapper: { flex: 1, marginHorizontal: 20, marginVertical: 10, borderRadius: 20, backgroundColor: '#000000', borderWidth: 1, borderColor: '#1A1A1A', overflow: 'hidden', justifyContent: 'center', alignItems: 'center' },
