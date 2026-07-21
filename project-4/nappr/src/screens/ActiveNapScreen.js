@@ -4,16 +4,16 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import { useAudioPlayer } from 'expo-audio';
 import { theme } from '../theme/colors';
 
 const BACKGROUND_LOCATION_TASK = 'background-location-task';
 const STORAGE_KEY = '@nappr_saved_routes';
 
-let backgroundNapSettings = null; 
+let backgroundNapSettings = null;
 
 const getDistanceKm = (lat1, lon1, lat2, lon2) => {
-  const R = 6371; 
+  const R = 6371;
   const dLat = (lat2 - lat1) * (Math.PI / 180);
   const dLon = (lon2 - lon1) * (Math.PI / 180);
   const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
@@ -36,7 +36,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
 
     if (dist <= radius) {
       const repeatSetting = Platform.OS === 'ios' ? true : 0;
-      if (vibrateEnabled) Vibration.vibrate([0, 1000, 500], repeatSetting); 
+      if (vibrateEnabled) Vibration.vibrate([0, 1000, 500], repeatSetting);
     }
   }
 });
@@ -46,19 +46,21 @@ export default function ActiveNapScreen({ route, navigation }) {
 
   const [currentDistance, setCurrentDistance] = useState(null);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
-  
+
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [vibrateEnabled, setVibrateEnabled] = useState(true);
-  
+
   const [isSaveModalVisible, setIsSaveModalVisible] = useState(false);
   const [routeName, setRouteName] = useState('');
   const [startName, setStartName] = useState('');
   const [destName, setDestName] = useState('');
-  
+
   const locationSubscription = useRef(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
 
-  // NEW: Initialize the expo-audio player hook
+  // SDK 56 Player Hook — expo-audio owns the native player's lifecycle.
+  // It auto-releases the player when this component unmounts, so we
+  // must NOT call player.pause() during unmount cleanup (see notes below).
   const audioSource = require('../../assets/alarm.mp3');
   const player = useAudioPlayer(audioSource);
 
@@ -87,9 +89,9 @@ export default function ActiveNapScreen({ route, navigation }) {
             newLocation.coords.latitude, newLocation.coords.longitude,
             destination.latitude, destination.longitude
           );
-          
+
           setCurrentDistance(dist);
-          
+
           if (dist <= radius && !hasTriggeredRef.current) {
             hasTriggeredRef.current = true;
             triggerAlarm();
@@ -111,31 +113,34 @@ export default function ActiveNapScreen({ route, navigation }) {
 
     startTracking();
 
+    // IMPORTANT: Do NOT call stopAlarm()/player.pause() here.
+    // useAudioPlayer's own internal effect was declared before this one,
+    // so on unmount its cleanup (which releases the native player) runs
+    // BEFORE this cleanup does. Calling player.pause() after that point
+    // throws, because the underlying native player object no longer exists.
+    // expo-audio already stops playback automatically when the player
+    // is released, so there's nothing extra to do for the audio here.
     return () => {
       isMounted = false;
       if (locationSubscription.current) locationSubscription.current.remove();
-      stopAlarm(); 
+      Vibration.cancel();
     };
-  }, []); 
+  }, []);
 
-  const triggerAlarm = async () => {
-    setIsAlarmActive(true); 
-    
+  const triggerAlarm = () => {
+    setIsAlarmActive(true);
+
     const { vibrate, sound } = settingsRef.current;
     const repeatSetting = Platform.OS === 'ios' ? true : 0;
 
     if (vibrate) {
-      Vibration.vibrate([0, 1000, 500], repeatSetting); 
+      Vibration.vibrate([0, 1000, 500], repeatSetting);
     }
 
     if (sound && player) {
       try {
-        await setAudioModeAsync({
-          playsInSilentMode: true,
-          interruptionMode: 'duck',
-        });
-        
         player.loop = true;
+        player.seekTo(0);
         player.play();
       } catch (playError) {
         console.error("Audio playback error:", playError);
@@ -150,25 +155,29 @@ export default function ActiveNapScreen({ route, navigation }) {
     ).start();
   };
 
-  const stopAlarm = async () => {
+  // stopAlarm is only ever safe to call while the screen is still mounted
+  // (e.g. the user tapping "STOP ALARM" / "CANCEL NAP"). It is intentionally
+  // NOT called from the unmount cleanup above.
+  const stopAlarm = () => {
     Vibration.cancel();
-    if (player) {
-      try {
+    try {
+      if (player && typeof player.pause === 'function') {
         player.pause();
         player.seekTo(0);
-      } catch (e) {
-        console.log("Cleanup note:", e);
       }
+    } catch (e) {
+      // Safe to ignore: the player may already be mid-teardown in some
+      // edge cases (e.g. fast refresh in dev). Playback is stopping either way.
     }
   };
 
   const handleCancelNap = async () => {
-    await stopAlarm();
-    backgroundNapSettings = null; 
+    stopAlarm();
+    backgroundNapSettings = null;
     hasTriggeredRef.current = false;
-    
+
     if (locationSubscription.current) locationSubscription.current.remove();
-    
+
     const started = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
     if (started) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
     navigation.goBack();
@@ -193,7 +202,7 @@ export default function ActiveNapScreen({ route, navigation }) {
       const existingRoutes = await AsyncStorage.getItem(STORAGE_KEY);
       const parsedRoutes = existingRoutes ? JSON.parse(existingRoutes) : [];
       const updatedRoutes = [...parsedRoutes, newRoute];
-      
+
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedRoutes));
       setIsSaveModalVisible(false);
       Alert.alert('Success', 'Route saved to your list!');
@@ -203,26 +212,26 @@ export default function ActiveNapScreen({ route, navigation }) {
   };
 
   const displayDistance = currentDistance !== null ? currentDistance.toFixed(1) : "--";
-  
+
   const backgroundColor = pulseAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: ['#000000', 'rgba(255, 30, 30, 0.4)'] 
+    outputRange: ['#000000', 'rgba(255, 30, 30, 0.4)']
   });
 
   return (
     <Animated.View style={[styles.container, { backgroundColor }]}>
-      
+
       <View style={styles.mainContent}>
-        
+
         <View style={styles.header}>
           <TouchableOpacity onPress={handleCancelNap} style={styles.iconButtonSmall}>
             <Ionicons name="arrow-back" size={24} color="#666" />
           </TouchableOpacity>
-          
+
           <Text style={[styles.headerTitle, isAlarmActive && { color: theme.danger }]}>
             {isAlarmActive ? "WAKE UP!" : "APPROACHING"}
           </Text>
-          
+
           <TouchableOpacity onPress={() => setIsSaveModalVisible(true)} style={styles.iconButtonSmall}>
             <Ionicons name="bookmark-outline" size={24} color="#666" />
           </TouchableOpacity>
@@ -319,8 +328,8 @@ const styles = StyleSheet.create({
   distanceValue: { color: '#FFFFFF', fontSize: 110, fontWeight: 'bold', includeFontPadding: false, tracking: -2 },
   distanceUnit: { color: '#888888', fontSize: 32, marginLeft: 8, fontWeight: '400' },
   radiusSubtext: { color: '#444', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textAlign: 'center', marginTop: 5 },
-  moonContainer: { alignItems: 'center', marginTop: 45 }, 
-  bottomSection: { paddingBottom: 60, paddingHorizontal: 40 }, 
+  moonContainer: { alignItems: 'center', marginTop: 45 },
+  bottomSection: { paddingBottom: 60, paddingHorizontal: 40 },
   togglesRow: { flexDirection: 'row', justifyContent: 'center', gap: 60, paddingVertical: 20 },
   iconButton: { padding: 15 },
   bottomContainer: { alignItems: 'center', marginTop: 10 },
