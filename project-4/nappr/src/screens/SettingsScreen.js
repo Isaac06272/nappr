@@ -1,11 +1,81 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, Switch, TouchableOpacity, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, Switch, TouchableOpacity, ScrollView, Alert, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 import { theme } from '../theme/colors';
 
+const SETTINGS_STORAGE_KEY = '@nappr_settings';
+const HISTORY_STORAGE_KEY = '@nappr_history';
+const ROUTES_STORAGE_KEY = '@nappr_saved_routes';
+
 export default function SettingsScreen() {
-  const [vibrate, setVibrate] = useState(true);
-  const [offlineMode, setOfflineMode] = useState(false);
+  const [settings, setSettings] = useState({
+    gradualVolume: true,
+    offlineMode: false,
+  });
+  const [locationStatus, setLocationStatus] = useState('Checking...');
+
+  useEffect(() => {
+    loadSettings();
+    checkPermissions();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      const storedSettings = await AsyncStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (storedSettings) {
+        setSettings(JSON.parse(storedSettings));
+      }
+    } catch (e) {
+      console.error("Failed to load settings", e);
+    }
+  };
+
+  const updateSetting = async (key, value) => {
+    const newSettings = { ...settings, [key]: value };
+    setSettings(newSettings);
+    try {
+      await AsyncStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(newSettings));
+    } catch (e) {
+      console.error("Failed to save setting", e);
+    }
+  };
+
+  const checkPermissions = async () => {
+    try {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      setLocationStatus(status === 'granted' ? 'Always On' : 'Denied');
+    } catch (e) {
+      setLocationStatus('Unknown');
+    }
+  };
+
+  const handleOpenSettings = () => {
+    Linking.openSettings();
+  };
+
+  const handleClearData = (key, title) => {
+    Alert.alert(
+      `Clear ${title}`,
+      `Are you sure you want to delete all your ${title.toLowerCase()}? This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await AsyncStorage.removeItem(key);
+              Alert.alert("Success", `${title} has been cleared.`);
+            } catch (e) {
+              Alert.alert("Error", `Failed to clear ${title.toLowerCase()}.`);
+            }
+          }
+        }
+      ]
+    );
+  };
 
   const SettingRow = ({ icon, title, value, type = 'chevron', onPress, onToggle }) => (
     <TouchableOpacity 
@@ -45,9 +115,13 @@ export default function SettingsScreen() {
         <View style={styles.card}>
           <SettingRow icon="musical-notes" title="Alarm Sound" value="Radar (Default)" type="text" />
           <View style={styles.divider} />
-          <SettingRow icon="volume-high" title="Gradual Volume Increase" value={true} type="switch" onToggle={() => {}} />
-          <View style={styles.divider} />
-          <SettingRow icon="phone-portrait-outline" title="Vibrate on Wake" value={vibrate} type="switch" onToggle={() => setVibrate(!vibrate)} />
+          <SettingRow 
+            icon="volume-high" 
+            title="Gradual Volume Increase" 
+            value={settings.gradualVolume} 
+            type="switch" 
+            onToggle={(val) => updateSetting('gradualVolume', val)} 
+          />
         </View>
       </View>
 
@@ -55,11 +129,35 @@ export default function SettingsScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionHeader}>TRACKING & DATA</Text>
         <View style={styles.card}>
-          <SettingRow icon="location" title="Location Permissions" value="Always On" type="text" />
+          <SettingRow 
+            icon="location" 
+            title="Location Permissions" 
+            value={locationStatus} 
+            type="text" 
+            onPress={handleOpenSettings}
+          />
           <View style={styles.divider} />
-          <SettingRow icon="cloud-offline" title="Offline Mode" value={offlineMode} type="switch" onToggle={() => setOfflineMode(!offlineMode)} />
+          <SettingRow 
+            icon="cloud-offline" 
+            title="Offline Mode" 
+            value={settings.offlineMode} 
+            type="switch" 
+            onToggle={(val) => updateSetting('offlineMode', val)} 
+          />
           <View style={styles.divider} />
-          <SettingRow icon="trash-outline" title="Clear History" type="chevron" />
+          <SettingRow 
+            icon="trash-outline" 
+            title="Clear History" 
+            type="chevron" 
+            onPress={() => handleClearData(HISTORY_STORAGE_KEY, 'Nap History')}
+          />
+          <View style={styles.divider} />
+          <SettingRow 
+            icon="bookmark-outline" 
+            title="Clear Saved Routes" 
+            type="chevron" 
+            onPress={() => handleClearData(ROUTES_STORAGE_KEY, 'Saved Routes')}
+          />
         </View>
       </View>
 
@@ -72,10 +170,6 @@ export default function SettingsScreen() {
           <SettingRow icon="information-circle" title="About Nappr" value="v1.0.0" type="text" />
         </View>
       </View>
-
-      <TouchableOpacity style={styles.logoutButton}>
-        <Text style={styles.logoutText}>Log Out</Text>
-      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -91,7 +185,5 @@ const styles = StyleSheet.create({
   iconContainer: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#2A2A2A', justifyContent: 'center', alignItems: 'center', marginRight: 15 },
   settingTitle: { color: theme.textPrimary, fontSize: 16, fontWeight: '500' },
   settingValue: { color: theme.textSecondary, fontSize: 14 },
-  divider: { height: 1, backgroundColor: '#222', marginLeft: 65 }, // Aligns with the text, not the icon
-  logoutButton: { marginHorizontal: 20, marginTop: 10, backgroundColor: 'rgba(255, 76, 76, 0.1)', padding: 15, borderRadius: 15, alignItems: 'center' },
-  logoutText: { color: theme.danger, fontSize: 16, fontWeight: 'bold' },
+  divider: { height: 1, backgroundColor: '#222', marginLeft: 65 },
 });
