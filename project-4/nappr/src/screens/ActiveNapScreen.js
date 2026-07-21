@@ -13,7 +13,8 @@ const HISTORY_STORAGE_KEY = '@nappr_history';
 
 let backgroundNapSettings = null;
 
-const getDistanceKm = (lat1, lon1, lat2, lon2) => {
+// The Offline Backup: Haversine straight-line distance
+const getOfflineDistanceKm = (lat1, lon1, lat2, lon2) => {
   const R = 6371;
   const dLat = (lat2 - lat1) * (Math.PI / 180);
   const dLon = (lon2 - lon1) * (Math.PI / 180);
@@ -23,17 +24,41 @@ const getDistanceKm = (lat1, lon1, lat2, lon2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
+// The Live API: Exact same OSRM call from your Dashboard
+const getLiveDrivingDistanceKm = async (lat1, lon1, lat2, lon2) => {
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${lon1},${lat1};${lon2},${lat2}?overview=false`;
+    const response = await fetch(url, { headers: { 'User-Agent': 'NapprApp/1.0' } });
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (data.routes && data.routes.length > 0) {
+      return data.routes[0].distance / 1000;
+    }
+  } catch (error) {
+    console.log("OSRM routing error:", error);
+  }
+  return null;
+};
+
+TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   if (error) return;
   if (data && backgroundNapSettings) {
     const { locations } = data;
     const latestLocation = locations[0];
     const { destination, radius, vibrateEnabled } = backgroundNapSettings;
 
-    const dist = getDistanceKm(
+    let dist = await getLiveDrivingDistanceKm(
       latestLocation.coords.latitude, latestLocation.coords.longitude,
       destination.latitude, destination.longitude
     );
+
+    // Fallback to offline math if the internet drops
+    if (dist === null) {
+      dist = getOfflineDistanceKm(
+        latestLocation.coords.latitude, latestLocation.coords.longitude,
+        destination.latitude, destination.longitude
+      );
+    }
 
     if (dist <= radius) {
       const repeatSetting = Platform.OS === 'ios' ? true : 0;
@@ -43,9 +68,9 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
 });
 
 export default function ActiveNapScreen({ route, navigation }) {
-  const { destination, radius, startName: routeStart, destName: routeDest } = route.params || { destination: { latitude: 0, longitude: 0 }, radius: 1 };
+  const { destination, radius, isIntense, startName: routeStart, destName: routeDest, distance: dashboardDistance } = route.params || { destination: { latitude: 0, longitude: 0 }, radius: 1 };
 
-  const [currentDistance, setCurrentDistance] = useState(null);
+  const [currentDistance, setCurrentDistance] = useState(dashboardDistance ? parseFloat(dashboardDistance) : null);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
 
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -82,19 +107,49 @@ export default function ActiveNapScreen({ route, navigation }) {
 
       const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
 
+      // Quick fetch to display distance instantly on load
+      try {
+        const initialLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        startCoordsRef.current = initialLoc.coords;
+        let initialDist = await getLiveDrivingDistanceKm(
+            initialLoc.coords.latitude, initialLoc.coords.longitude,
+            destination.latitude, destination.longitude
+        );
+        if (initialDist === null) {
+            initialDist = getOfflineDistanceKm(
+                initialLoc.coords.latitude, initialLoc.coords.longitude,
+                destination.latitude, destination.longitude
+            );
+        }
+        if (isMounted) {
+            setCurrentDistance(initialDist);
+            if (initialDist <= radius && !hasTriggeredRef.current) {
+                hasTriggeredRef.current = true;
+                triggerAlarm();
+            }
+        }
+      } catch(e) {}
+
       locationSubscription.current = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 10 },
-        (newLocation) => {
+        async (newLocation) => {
           if (!isMounted) return;
           
           if (!startCoordsRef.current) {
             startCoordsRef.current = newLocation.coords;
           }
 
-          const dist = getDistanceKm(
+          let dist = await getLiveDrivingDistanceKm(
             newLocation.coords.latitude, newLocation.coords.longitude,
             destination.latitude, destination.longitude
           );
+
+          if (dist === null) {
+            dist = getOfflineDistanceKm(
+                newLocation.coords.latitude, newLocation.coords.longitude,
+                destination.latitude, destination.longitude
+            );
+          }
 
           setCurrentDistance(dist);
 
@@ -117,7 +172,9 @@ export default function ActiveNapScreen({ route, navigation }) {
       }
     };
 
-    startTracking();
+    if (destination?.latitude) {
+        startTracking();
+    }
 
     return () => {
       isMounted = false;
@@ -176,24 +233,17 @@ export default function ActiveNapScreen({ route, navigation }) {
 
       let pointAName = routeStart || "Starting Point";
       let pointBName = routeDest || "Destination";
-      let totalDistance = "--";
+      let totalDistance = dashboardDistance ? `${parseFloat(dashboardDistance).toFixed(1)} km` : "--";
 
       try {
-        if (startCoordsRef.current) {
-          totalDistance = getDistanceKm(
-            startCoordsRef.current.latitude, startCoordsRef.current.longitude,
-            destination.latitude, destination.longitude
-          ).toFixed(1);
-
-          if (!routeStart) {
-            const startPlace = await Location.reverseGeocodeAsync(startCoordsRef.current);
-            if (startPlace[0]) {
-              pointAName = startPlace[0].city || startPlace[0].district || startPlace[0].subregion || startPlace[0].name || "Starting Point";
-            }
+        if (!routeStart && startCoordsRef.current) {
+          const startPlace = await Location.reverseGeocodeAsync(startCoordsRef.current);
+          if (startPlace[0]) {
+            pointAName = startPlace[0].city || startPlace[0].district || startPlace[0].subregion || startPlace[0].name || "Starting Point";
           }
         }
 
-        if (!routeDest) {
+        if (!routeDest && destination?.latitude) {
           const endPlace = await Location.reverseGeocodeAsync(destination);
           if (endPlace[0]) {
             pointBName = endPlace[0].city || endPlace[0].district || endPlace[0].subregion || endPlace[0].name || "Destination";
@@ -209,7 +259,7 @@ export default function ActiveNapScreen({ route, navigation }) {
         start: pointAName,
         destination: pointBName,
         duration: `${durationMinutes} min`,
-        distance: `${totalDistance} km`,
+        distance: totalDistance,
         status: status
       };
 
@@ -287,10 +337,12 @@ export default function ActiveNapScreen({ route, navigation }) {
           </TouchableOpacity>
         </View>
         <View style={styles.distanceWrapper}>
-          <Text style={styles.distanceValue}>{displayDistance}</Text>
+          <Text style={styles.distanceValue} adjustsFontSizeToFit={true} numberOfLines={1}>
+            {displayDistance}
+          </Text>
           <Text style={styles.distanceUnit}>km</Text>
         </View>
-        <Text style={styles.radiusSubtext}>ALARM SET AT {radius.toFixed(1)} KM</Text>
+        <Text style={styles.radiusSubtext}>ALARM SET AT {radius ? radius.toFixed(1) : "--"} KM</Text>
         <View style={styles.moonContainer}>
           <Ionicons name="moon-outline" size={120} color="#1A1A1A" />
         </View>
@@ -327,7 +379,7 @@ export default function ActiveNapScreen({ route, navigation }) {
             <TextInput style={styles.input} placeholder="Destination" placeholderTextColor="#555" value={destName} onChangeText={setDestName} />
             <View style={styles.radiusLockContainer}>
               <Ionicons name="lock-closed-outline" size={16} color={theme.accentMint} />
-              <Text style={styles.radiusLockText}>Radius locked at {radius.toFixed(1)} km</Text>
+              <Text style={styles.radiusLockText}>Radius locked at {radius ? radius.toFixed(1) : "--"} km</Text>
             </View>
             <TouchableOpacity style={styles.saveButton} onPress={handleSaveRoute}>
               <Text style={styles.saveButtonText}>SAVE ROUTE</Text>
@@ -345,7 +397,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 25, paddingTop: 60 },
   iconButtonSmall: { padding: 5 },
   headerTitle: { color: theme.accentMint, fontSize: 16, fontWeight: '800', letterSpacing: 2 },
-  distanceWrapper: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center', marginTop: 80 },
+  distanceWrapper: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center', marginTop: 80, paddingHorizontal: 20 },
   distanceValue: { color: '#FFFFFF', fontSize: 110, fontWeight: 'bold', includeFontPadding: false, tracking: -2 },
   distanceUnit: { color: '#888888', fontSize: 32, marginLeft: 8, fontWeight: '400' },
   radiusSubtext: { color: '#444', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textAlign: 'center', marginTop: 5 },
