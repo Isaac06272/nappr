@@ -9,7 +9,7 @@ import { theme } from '../theme/colors';
 
 const BACKGROUND_LOCATION_TASK = 'background-location-task';
 const STORAGE_KEY = '@nappr_saved_routes';
-const HISTORY_STORAGE_KEY = '@nappr_history'; // NEW: Added history key
+const HISTORY_STORAGE_KEY = '@nappr_history';
 
 let backgroundNapSettings = null;
 
@@ -43,7 +43,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
 });
 
 export default function ActiveNapScreen({ route, navigation }) {
-  const { destination, radius } = route.params || { destination: { latitude: 0, longitude: 0 }, radius: 1 };
+  const { destination, radius, startName: routeStart, destName: routeDest } = route.params || { destination: { latitude: 0, longitude: 0 }, radius: 1 };
 
   const [currentDistance, setCurrentDistance] = useState(null);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
@@ -59,8 +59,8 @@ export default function ActiveNapScreen({ route, navigation }) {
   const locationSubscription = useRef(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
 
-  // NEW: Keep track of exactly when tracking started
   const startTimeRef = useRef(Date.now());
+  const startCoordsRef = useRef(null);
 
   const audioSource = require('../../assets/alarm.mp3');
   const player = useAudioPlayer(audioSource);
@@ -86,6 +86,11 @@ export default function ActiveNapScreen({ route, navigation }) {
         { accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 10 },
         (newLocation) => {
           if (!isMounted) return;
+          
+          if (!startCoordsRef.current) {
+            startCoordsRef.current = newLocation.coords;
+          }
+
           const dist = getDistanceKm(
             newLocation.coords.latitude, newLocation.coords.longitude,
             destination.latitude, destination.longitude
@@ -156,12 +161,9 @@ export default function ActiveNapScreen({ route, navigation }) {
         player.pause();
         player.seekTo(0);
       }
-    } catch (e) {
-      // Safe to ignore
-    }
+    } catch (e) {}
   };
 
-  // NEW: Helper function to save the route to history
   const saveToHistory = async (status) => {
     try {
       const endTime = Date.now();
@@ -172,12 +174,42 @@ export default function ActiveNapScreen({ route, navigation }) {
       const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const dateString = `${now.toLocaleDateString()} at ${timeString}`;
 
+      let pointAName = routeStart || "Starting Point";
+      let pointBName = routeDest || "Destination";
+      let totalDistance = "--";
+
+      try {
+        if (startCoordsRef.current) {
+          totalDistance = getDistanceKm(
+            startCoordsRef.current.latitude, startCoordsRef.current.longitude,
+            destination.latitude, destination.longitude
+          ).toFixed(1);
+
+          if (!routeStart) {
+            const startPlace = await Location.reverseGeocodeAsync(startCoordsRef.current);
+            if (startPlace[0]) {
+              pointAName = startPlace[0].city || startPlace[0].district || startPlace[0].subregion || startPlace[0].name || "Starting Point";
+            }
+          }
+        }
+
+        if (!routeDest) {
+          const endPlace = await Location.reverseGeocodeAsync(destination);
+          if (endPlace[0]) {
+            pointBName = endPlace[0].city || endPlace[0].district || endPlace[0].subregion || endPlace[0].name || "Destination";
+          }
+        }
+      } catch (geocodeError) {
+        console.log("Geocoding unavailable, using defaults.", geocodeError);
+      }
+
       const historyEntry = {
         id: Date.now().toString(),
         date: dateString,
-        start: 'Current Location', // Defaulting to this since we aren't reverse-geocoding yet
-        destination: `Radius: ${radius.toFixed(1)}km`,
+        start: pointAName,
+        destination: pointBName,
         duration: `${durationMinutes} min`,
+        distance: `${totalDistance} km`,
         status: status
       };
 
@@ -192,13 +224,9 @@ export default function ActiveNapScreen({ route, navigation }) {
   };
 
   const handleCancelNap = async () => {
-    // 1. Determine status: If the red screen is up, it's completed. Otherwise, cancelled.
     const finalStatus = isAlarmActive ? 'Completed' : 'Cancelled';
-    
-    // 2. Save it to history
     await saveToHistory(finalStatus);
 
-    // 3. Stop everything else
     stopAlarm();
     backgroundNapSettings = null;
     hasTriggeredRef.current = false;
@@ -239,7 +267,6 @@ export default function ActiveNapScreen({ route, navigation }) {
   };
 
   const displayDistance = currentDistance !== null ? currentDistance.toFixed(1) : "--";
-
   const backgroundColor = pulseAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['#000000', 'rgba(255, 30, 30, 0.4)']
@@ -252,39 +279,31 @@ export default function ActiveNapScreen({ route, navigation }) {
           <TouchableOpacity onPress={handleCancelNap} style={styles.iconButtonSmall}>
             <Ionicons name="arrow-back" size={24} color="#666" />
           </TouchableOpacity>
-
           <Text style={[styles.headerTitle, isAlarmActive && { color: theme.danger }]}>
             {isAlarmActive ? "WAKE UP!" : "APPROACHING"}
           </Text>
-
           <TouchableOpacity onPress={() => setIsSaveModalVisible(true)} style={styles.iconButtonSmall}>
             <Ionicons name="bookmark-outline" size={24} color="#666" />
           </TouchableOpacity>
         </View>
-
         <View style={styles.distanceWrapper}>
           <Text style={styles.distanceValue}>{displayDistance}</Text>
           <Text style={styles.distanceUnit}>km</Text>
         </View>
-
         <Text style={styles.radiusSubtext}>ALARM SET AT {radius.toFixed(1)} KM</Text>
-
         <View style={styles.moonContainer}>
           <Ionicons name="moon-outline" size={120} color="#1A1A1A" />
         </View>
       </View>
-
       <View style={styles.bottomSection}>
         <View style={styles.togglesRow}>
           <TouchableOpacity onPress={() => setSoundEnabled(!soundEnabled)} style={styles.iconButton}>
             <Ionicons name={soundEnabled ? "volume-high" : "volume-mute"} size={26} color={soundEnabled ? '#666' : '#222'} />
           </TouchableOpacity>
-
           <TouchableOpacity onPress={() => setVibrateEnabled(!vibrateEnabled)} style={styles.iconButton}>
             <Ionicons name={vibrateEnabled ? "phone-portrait" : "phone-portrait-outline"} size={26} color={vibrateEnabled ? '#666' : '#222'} />
           </TouchableOpacity>
         </View>
-
         <View style={styles.bottomContainer}>
           <TouchableOpacity onPress={handleCancelNap} activeOpacity={0.6}>
             <Text style={[styles.cancelText, isAlarmActive && { color: theme.danger }]}>
@@ -303,34 +322,13 @@ export default function ActiveNapScreen({ route, navigation }) {
                     <Ionicons name="close" size={28} color="#666" />
                 </TouchableOpacity>
             </View>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Route Name (e.g., Obando to PUP Manila)"
-              placeholderTextColor="#555"
-              value={routeName}
-              onChangeText={setRouteName}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Starting Point"
-              placeholderTextColor="#555"
-              value={startName}
-              onChangeText={setStartName}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Destination"
-              placeholderTextColor="#555"
-              value={destName}
-              onChangeText={setDestName}
-            />
-
+            <TextInput style={styles.input} placeholder="Route Name (e.g., Obando to PUP Manila)" placeholderTextColor="#555" value={routeName} onChangeText={setRouteName} />
+            <TextInput style={styles.input} placeholder="Starting Point" placeholderTextColor="#555" value={startName} onChangeText={setStartName} />
+            <TextInput style={styles.input} placeholder="Destination" placeholderTextColor="#555" value={destName} onChangeText={setDestName} />
             <View style={styles.radiusLockContainer}>
               <Ionicons name="lock-closed-outline" size={16} color={theme.accentMint} />
               <Text style={styles.radiusLockText}>Radius locked at {radius.toFixed(1)} km</Text>
             </View>
-
             <TouchableOpacity style={styles.saveButton} onPress={handleSaveRoute}>
               <Text style={styles.saveButtonText}>SAVE ROUTE</Text>
             </TouchableOpacity>

@@ -31,7 +31,6 @@ export default function HistoryScreen({ navigation }) {
     return unsubscribe;
   }, [navigation]);
 
-  // NEW: The function to wipe the storage completely
   const handleClearHistory = () => {
     Alert.alert(
       "Clear History",
@@ -44,7 +43,7 @@ export default function HistoryScreen({ navigation }) {
           onPress: async () => {
             try {
               await AsyncStorage.removeItem(HISTORY_STORAGE_KEY);
-              setHistoryData([]); // Instantly clear the screen
+              setHistoryData([]); 
             } catch (e) {
               Alert.alert("Error", "Failed to clear history.");
             }
@@ -85,8 +84,17 @@ export default function HistoryScreen({ navigation }) {
         </View>
 
         <View style={styles.cardFooter}>
-          <Ionicons name="time-outline" size={14} color={theme.textSecondary} />
-          <Text style={styles.durationText}>Nap Duration: {item.duration}</Text>
+          <View style={styles.footerItem}>
+            <Ionicons name="time-outline" size={14} color={theme.textSecondary} />
+            <Text style={styles.footerText}>{item.duration}</Text>
+          </View>
+          
+          {item.distance && (
+            <View style={styles.footerItem}>
+              <Ionicons name="map-outline" size={14} color={theme.textSecondary} />
+              <Text style={styles.footerText}>{item.distance}</Text>
+            </View>
+          )}
         </View>
       </View>
     );
@@ -102,7 +110,6 @@ export default function HistoryScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* NEW: Updated Header with a Trash Icon */}
       <View style={styles.headerRow}>
         <Text style={styles.headerTitle}>Nap History</Text>
         {historyData.length > 0 && (
@@ -126,12 +133,9 @@ export default function HistoryScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.background, paddingTop: 60 },
-  
-  // Updated header styles to position the button
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 20 },
   headerTitle: { color: theme.textPrimary, fontSize: 28, fontWeight: 'bold' },
   clearButton: { padding: 8, marginRight: -8 },
-
   listContainer: { paddingHorizontal: 20, paddingBottom: 100 },
   card: { backgroundColor: theme.surface, borderRadius: 15, padding: 20, marginBottom: 15 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
@@ -147,7 +151,8 @@ const styles = StyleSheet.create({
   routeDetails: { flex: 1, justifyContent: 'space-between' },
   locationText: { color: theme.textPrimary, fontSize: 16, fontWeight: '600' },
   cardFooter: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#222', paddingTop: 15, marginTop: 5 },
-  durationText: { color: theme.textSecondary, fontSize: 14, marginLeft: 5 },
+  footerItem: { flexDirection: 'row', alignItems: 'center', marginRight: 25 },
+  footerText: { color: theme.textSecondary, fontSize: 14, marginLeft: 6 },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: -50 },
   emptyText: { color: theme.textPrimary, fontSize: 18, fontWeight: 'bold', marginTop: 15 },
   emptySubtext: { color: theme.textSecondary, fontSize: 14, marginTop: 8, textAlign: 'center', paddingHorizontal: 40 },
