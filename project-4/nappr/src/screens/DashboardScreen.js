@@ -233,6 +233,13 @@ export default function DashboardScreen({ navigation }) {
       <View style={styles.radarWrapper}>
         <View style={styles.radarContainer}>
           
+          {/* TACTICAL GRID & CROSSHAIRS */}
+          <View style={[styles.gridRing, { width: 80, height: 80, borderRadius: 40 }]} />
+          <View style={[styles.gridRing, { width: 160, height: 160, borderRadius: 80 }]} />
+          <View style={[styles.gridRing, { width: 240, height: 240, borderRadius: 120 }]} />
+          <View style={styles.crosshairVertical} />
+          <View style={styles.crosshairHorizontal} />
+
           <Animated.View style={[
             styles.pulseRing, 
             {
@@ -245,7 +252,7 @@ export default function DashboardScreen({ navigation }) {
           ]} />
 
           <View style={[
-            styles.wakeUpRadius, 
+            styles.wakeUpRadius,
             { 
               width: wakeUpRadiusPx * 2, 
               height: wakeUpRadiusPx * 2, 
@@ -367,11 +374,16 @@ const styles = StyleSheet.create({
   radarWrapper: { flex: 1, marginHorizontal: 20, marginVertical: 10, borderRadius: 20, backgroundColor: '#000000', borderWidth: 1, borderColor: '#1A1A1A', overflow: 'hidden', justifyContent: 'center', alignItems: 'center' },
   radarContainer: { width: 240, height: 240, justifyContent: 'center', alignItems: 'center' },
   
+  // TACTICAL GRID
+  gridRing: { position: 'absolute', borderWidth: 1, borderColor: 'rgba(0, 245, 212, 0.15)' },
+  crosshairVertical: { position: 'absolute', width: 1, height: '100%', backgroundColor: 'rgba(0, 245, 212, 0.15)' },
+  crosshairHorizontal: { position: 'absolute', height: 1, width: '100%', backgroundColor: 'rgba(0, 245, 212, 0.15)' },
+
   wakeUpRadius: { position: 'absolute', borderWidth: 1.5, borderColor: theme.accentMint, backgroundColor: 'rgba(0, 245, 212, 0.05)' },
   pulseRing: { position: 'absolute', backgroundColor: theme.accentMint, borderRadius: 100 },
   
-  trackingLine: { position: 'absolute', height: 1, borderBottomWidth: 1.5, borderColor: theme.accentMint, borderStyle: 'dashed', opacity: 0.6 },
-  
+  trackingLine: { position: 'absolute', height: 1, borderBottomWidth: 1.5, borderColor: theme.accentMint, borderStyle: 'dashed', opacity: 0.8 },
+
   // PURE ICONS
   destinationTarget: { position: 'absolute', width: 24, height: 24, justifyContent: 'center', alignItems: 'center' },
   userBlip: { position: 'absolute', width: 20, height: 20, justifyContent: 'center', alignItems: 'center' },
