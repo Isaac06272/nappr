@@ -13,6 +13,7 @@ const HISTORY_STORAGE_KEY = '@nappr_history';
 const SETTINGS_STORAGE_KEY = '@nappr_settings';
 
 let backgroundNapSettings = null;
+let backgroundTriggered = false; 
 
 const getOfflineDistanceKm = (lat1, lon1, lat2, lon2) => {
   const R = 6371;
@@ -41,13 +42,12 @@ const getLiveDrivingDistanceKm = async (lat1, lon1, lat2, lon2) => {
 
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   if (error) return;
-  if (data && backgroundNapSettings) {
+  if (data && backgroundNapSettings && !backgroundTriggered) {
     const { locations } = data;
     const latestLocation = locations[0];
     const { destination, radius, vibrateEnabled, offlineMode } = backgroundNapSettings;
 
     let dist = null;
-    // Skip API if offline mode is enabled
     if (!offlineMode) {
       dist = await getLiveDrivingDistanceKm(
         latestLocation.coords.latitude, latestLocation.coords.longitude,
@@ -63,8 +63,13 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
     }
 
     if (dist <= radius) {
-      const repeatSetting = Platform.OS === 'ios' ? true : 0;
-      if (vibrateEnabled) Vibration.vibrate([0, 1000, 500], repeatSetting);
+      backgroundTriggered = true; 
+      
+      // FIX: Hardware-level continuous vibration in the background
+      // [Wait 0ms, Vibrate 1000ms, Wait 1000ms...] repeating indefinitely
+      if (vibrateEnabled) {
+        Vibration.vibrate([0, 1000, 1000], true);
+      }
     }
   }
 });
@@ -78,7 +83,6 @@ export default function ActiveNapScreen({ route, navigation }) {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [vibrateEnabled, setVibrateEnabled] = useState(true);
 
-  // Global settings state
   const [offlineMode, setOfflineMode] = useState(false);
   const [gradualVolume, setGradualVolume] = useState(true);
 
@@ -89,7 +93,7 @@ export default function ActiveNapScreen({ route, navigation }) {
 
   const locationSubscription = useRef(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
-  const volumeIntervalRef = useRef(null); // Tracks the fade-in volume timer
+  const volumeIntervalRef = useRef(null); 
 
   const startTimeRef = useRef(Date.now());
   const startCoordsRef = useRef(null);
@@ -101,6 +105,7 @@ export default function ActiveNapScreen({ route, navigation }) {
   const settingsRef = useRef({ sound: true, vibrate: true, gradualVolume: true });
 
   useEffect(() => {
+    backgroundTriggered = false; 
     settingsRef.current = { sound: soundEnabled, vibrate: vibrateEnabled, gradualVolume };
     backgroundNapSettings = { destination, radius, vibrateEnabled, soundEnabled, offlineMode };
   }, [destination, radius, vibrateEnabled, soundEnabled, offlineMode, gradualVolume]);
@@ -109,7 +114,6 @@ export default function ActiveNapScreen({ route, navigation }) {
     let isMounted = true;
 
     const initTracking = async () => {
-      // 1. Load settings before starting the GPS
       let isOffline = false;
       let isGradual = true;
       try {
@@ -132,7 +136,6 @@ export default function ActiveNapScreen({ route, navigation }) {
 
       const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
 
-      // Quick fetch to display distance instantly on load
       try {
         const initialLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         startCoordsRef.current = initialLoc.coords;
@@ -156,6 +159,7 @@ export default function ActiveNapScreen({ route, navigation }) {
             setCurrentDistance(initialDist);
             if (initialDist <= radius && !hasTriggeredRef.current) {
                 hasTriggeredRef.current = true;
+                backgroundTriggered = true; 
                 triggerAlarm();
             }
         }
@@ -189,6 +193,7 @@ export default function ActiveNapScreen({ route, navigation }) {
 
           if (dist <= radius && !hasTriggeredRef.current) {
             hasTriggeredRef.current = true;
+            backgroundTriggered = true; 
             triggerAlarm();
           }
         }
@@ -214,7 +219,7 @@ export default function ActiveNapScreen({ route, navigation }) {
       isMounted = false;
       if (locationSubscription.current) locationSubscription.current.remove();
       if (volumeIntervalRef.current) clearInterval(volumeIntervalRef.current);
-      Vibration.cancel();
+      // FIX: Removed Vibration.cancel() from here so Android closing the screen doesn't kill the alarm.
     };
   }, []);
 
@@ -222,10 +227,11 @@ export default function ActiveNapScreen({ route, navigation }) {
     setIsAlarmActive(true);
 
     const { vibrate, sound, gradualVolume: shouldRampVolume } = settingsRef.current;
-    const repeatSetting = Platform.OS === 'ios' ? true : 0;
 
+    // FIX: Hardware-level continuous vibration. 
+    // `true` tells the native OS to loop this forever until explicitly cancelled.
     if (vibrate) {
-      Vibration.vibrate([0, 1000, 500], repeatSetting);
+      Vibration.vibrate([0, 1000, 1000], true);
     }
 
     if (sound && player) {
@@ -233,7 +239,7 @@ export default function ActiveNapScreen({ route, navigation }) {
         player.loop = true;
         
         if (shouldRampVolume) {
-          player.volume = 0; // Start silently
+          player.volume = 0; 
           player.seekTo(0);
           player.play();
           
@@ -246,9 +252,9 @@ export default function ActiveNapScreen({ route, navigation }) {
             } else {
               player.volume = currentVol;
             }
-          }, 1000); // Increases by 10% every second
+          }, 1000); 
         } else {
-          player.volume = 1.0; // Blast immediately
+          player.volume = 1.0; 
           player.seekTo(0);
           player.play();
         }
@@ -266,7 +272,8 @@ export default function ActiveNapScreen({ route, navigation }) {
   };
 
   const stopAlarm = () => {
-    Vibration.cancel();
+    Vibration.cancel(); // This is the ONLY place it should be cancelled now.
+    
     if (volumeIntervalRef.current) clearInterval(volumeIntervalRef.current);
     try {
       if (player && typeof player.pause === 'function') {
@@ -334,6 +341,7 @@ export default function ActiveNapScreen({ route, navigation }) {
 
     stopAlarm();
     backgroundNapSettings = null;
+    backgroundTriggered = false; 
     hasTriggeredRef.current = false;
 
     if (locationSubscription.current) locationSubscription.current.remove();
@@ -373,7 +381,6 @@ export default function ActiveNapScreen({ route, navigation }) {
 
   const displayDistance = currentDistance !== null ? currentDistance.toFixed(1) : "--";
   
-  // CHANGED: Interpolating to a soft mint glow instead of red
   const backgroundColor = pulseAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['#000000', 'rgba(0, 245, 212, 0.35)']
@@ -386,7 +393,6 @@ export default function ActiveNapScreen({ route, navigation }) {
           <TouchableOpacity onPress={handleCancelNap} style={styles.iconButtonSmall}>
             <Ionicons name="arrow-back" size={24} color="#666" />
           </TouchableOpacity>
-          {/* CHANGED: Text color uses theme.accentMint when alarm is active */}
           <Text style={[styles.headerTitle, isAlarmActive && { color: theme.accentMint }]}>
             {isAlarmActive ? "WAKE UP!" : "APPROACHING"}
           </Text>
@@ -416,7 +422,6 @@ export default function ActiveNapScreen({ route, navigation }) {
         </View>
         <View style={styles.bottomContainer}>
           <TouchableOpacity onPress={handleCancelNap} activeOpacity={0.6}>
-            {/* CHANGED: Text color uses theme.accentMint when alarm is active */}
             <Text style={[styles.cancelText, isAlarmActive && { color: theme.accentMint }]}>
               {isAlarmActive ? "STOP ALARM" : "CANCEL NAP"}
             </Text>
