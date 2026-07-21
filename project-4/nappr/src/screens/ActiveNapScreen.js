@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Audio } from 'expo-av';
 import { theme } from '../theme/colors';
 
 const BACKGROUND_LOCATION_TASK = 'background-location-task';
@@ -21,6 +22,7 @@ const getDistanceKm = (lat1, lon1, lat2, lon2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
+// BACKGROUND TASK
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
   if (error) return;
   if (data && backgroundNapSettings) {
@@ -34,7 +36,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
     );
 
     if (dist <= radius) {
-      if (vibrateEnabled) Vibration.vibrate([1000, 1000, 1000, 1000], true); 
+      if (vibrateEnabled) Vibration.vibrate([0, 1000, 500], true); 
     }
   }
 });
@@ -48,7 +50,6 @@ export default function ActiveNapScreen({ route, navigation }) {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [vibrateEnabled, setVibrateEnabled] = useState(true);
   
-  // Save Route Modal State
   const [isSaveModalVisible, setIsSaveModalVisible] = useState(false);
   const [routeName, setRouteName] = useState('');
   const [startName, setStartName] = useState('');
@@ -56,11 +57,20 @@ export default function ActiveNapScreen({ route, navigation }) {
   
   const locationSubscription = useRef(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
+  const soundRef = useRef(null); 
 
+  // THE FIX: Refs bypass the React render cycle, stopping the instant-cancel bug.
+  const hasTriggeredRef = useRef(false);
+  const settingsRef = useRef({ sound: true, vibrate: true });
+
+  // Keep refs and background tasks synced with the latest UI toggles
   useEffect(() => {
+    settingsRef.current = { sound: soundEnabled, vibrate: vibrateEnabled };
     backgroundNapSettings = { destination, radius, vibrateEnabled, soundEnabled };
   }, [destination, radius, vibrateEnabled, soundEnabled]);
 
+  // INITIALIZE TRACKING 
+  // Notice the empty [] at the end. This prevents the tracker from refreshing and killing the alarm!
   useEffect(() => {
     let isMounted = true;
 
@@ -78,8 +88,14 @@ export default function ActiveNapScreen({ route, navigation }) {
             newLocation.coords.latitude, newLocation.coords.longitude,
             destination.latitude, destination.longitude
           );
+          
           setCurrentDistance(dist);
-          if (dist <= radius && !isAlarmActive) triggerAlarm();
+          
+          // Trigger alarm ONLY if it hasn't triggered yet
+          if (dist <= radius && !hasTriggeredRef.current) {
+            hasTriggeredRef.current = true;
+            triggerAlarm();
+          }
         }
       );
 
@@ -100,13 +116,40 @@ export default function ActiveNapScreen({ route, navigation }) {
     return () => {
       isMounted = false;
       if (locationSubscription.current) locationSubscription.current.remove();
+      // stopAlarm() now ONLY runs when you physically leave the screen, not during a UI refresh.
       stopAlarm(); 
     };
-  }, [isAlarmActive]); 
+  }, []); 
 
-  const triggerAlarm = () => {
-    setIsAlarmActive(true);
-    if (vibrateEnabled) Vibration.vibrate([1000, 1000], true);
+  // ALARM LOGIC 
+  const triggerAlarm = async () => {
+    setIsAlarmActive(true); // Tell UI to flash red
+    
+    // Read directly from the Ref so it doesn't wait for a React render
+    const { vibrate, sound } = settingsRef.current;
+
+    if (vibrate) {
+      Vibration.vibrate([0, 1000, 500], true); 
+    }
+
+    if (sound) {
+      try {
+        await Audio.setAudioModeAsync({
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: true,
+          shouldDuckAndroid: true,
+        });
+
+        const { sound: audioObject } = await Audio.Sound.createAsync(
+          require('../../assets/alarm.mp3') 
+        );
+        soundRef.current = audioObject;
+        await audioObject.setIsLoopingAsync(true);
+        await audioObject.playAsync();
+      } catch (error) {
+        console.error("Failed to play the alarm sound:", error);
+      }
+    }
 
     Animated.loop(
       Animated.sequence([
@@ -116,11 +159,20 @@ export default function ActiveNapScreen({ route, navigation }) {
     ).start();
   };
 
-  const stopAlarm = () => Vibration.cancel();
+  const stopAlarm = async () => {
+    Vibration.cancel();
+    if (soundRef.current) {
+      await soundRef.current.stopAsync();
+      await soundRef.current.unloadAsync();
+      soundRef.current = null;
+    }
+  };
 
   const handleCancelNap = async () => {
-    stopAlarm();
+    await stopAlarm();
     backgroundNapSettings = null; 
+    hasTriggeredRef.current = false;
+    
     if (locationSubscription.current) locationSubscription.current.remove();
     
     const started = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
@@ -187,7 +239,6 @@ export default function ActiveNapScreen({ route, navigation }) {
           <Text style={styles.distanceUnit}>km</Text>
         </View>
 
-        {/* MINIMALIST RADIUS DISPLAY */}
         <Text style={styles.radiusSubtext}>ALARM SET AT {radius.toFixed(1)} KM</Text>
 
         <View style={styles.moonContainer}>
@@ -207,6 +258,8 @@ export default function ActiveNapScreen({ route, navigation }) {
           </TouchableOpacity>
         </View>
 
+        {/* Test button safely removed since we verified hardware works! */}
+
         <View style={styles.bottomContainer}>
           <TouchableOpacity onPress={handleCancelNap} activeOpacity={0.6}>
             <Text style={[styles.cancelText, isAlarmActive && { color: theme.danger }]}>
@@ -216,7 +269,6 @@ export default function ActiveNapScreen({ route, navigation }) {
         </View>
       </View>
 
-      {/* SLEEK SAVE MODAL */}
       <Modal visible={isSaveModalVisible} animationType="slide" transparent={true} onRequestClose={() => setIsSaveModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -271,22 +323,16 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 25, paddingTop: 60 },
   iconButtonSmall: { padding: 5 },
   headerTitle: { color: theme.accentMint, fontSize: 16, fontWeight: '800', letterSpacing: 2 },
-  
   distanceWrapper: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center', marginTop: 80 },
   distanceValue: { color: '#FFFFFF', fontSize: 110, fontWeight: 'bold', includeFontPadding: false, tracking: -2 },
   distanceUnit: { color: '#888888', fontSize: 32, marginLeft: 8, fontWeight: '400' },
-  
-  // NEW RADIUS TEXT STYLE
   radiusSubtext: { color: '#444', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textAlign: 'center', marginTop: 5 },
-  
-  moonContainer: { alignItems: 'center', marginTop: 45 }, // Slightly reduced margin to account for new text
-  
-  bottomSection: { paddingBottom: 60 },
+  moonContainer: { alignItems: 'center', marginTop: 45 }, 
+  bottomSection: { paddingBottom: 60, paddingHorizontal: 40 }, 
   togglesRow: { flexDirection: 'row', justifyContent: 'center', gap: 60, paddingVertical: 20 },
   iconButton: { padding: 15 },
   bottomContainer: { alignItems: 'center', marginTop: 10 },
   cancelText: { color: '#5A7580', fontSize: 13, fontWeight: 'bold', letterSpacing: 1 },
-
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#111', borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25, paddingBottom: 50, borderWidth: 1, borderColor: '#222' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25 },
