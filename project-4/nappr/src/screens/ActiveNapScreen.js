@@ -2,7 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Vibration, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 import { theme } from '../theme/colors';
+
+// 1. DEFINE THE BACKGROUND TASK NAME
+const BACKGROUND_LOCATION_TASK = 'background-location-task';
+
+// 2. GLOBAL SETTINGS FOR BACKGROUND TASK
+// This allows the headless task to know where you are going even when the screen is off.
+let backgroundNapSettings = null; 
 
 // MATHEMATICS: The Haversine Formula
 const getDistanceKm = (lat1, lon1, lat2, lon2) => {
@@ -15,32 +23,76 @@ const getDistanceKm = (lat1, lon1, lat2, lon2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
+// ==========================================
+// 3. THE HEADLESS BACKGROUND TASK
+// This runs directly on the OS when the screen is black.
+// ==========================================
+TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
+  if (error) {
+    console.error("Background Location Error:", error);
+    return;
+  }
+  if (data && backgroundNapSettings) {
+    const { locations } = data;
+    const latestLocation = locations[0];
+    const { destination, radius, vibrateEnabled } = backgroundNapSettings;
+
+    const dist = getDistanceKm(
+      latestLocation.coords.latitude,
+      latestLocation.coords.longitude,
+      destination.latitude,
+      destination.longitude
+    );
+
+    console.log(`[Background] Distance: ${dist.toFixed(2)} km`);
+
+    // THE TRIGGER: If we breach the radius while in the background!
+    if (dist <= radius) {
+      console.log("[Background] TARGET REACHED! Triggering Alarm.");
+      if (vibrateEnabled) {
+        // Continuous vibration pattern until canceled
+        Vibration.vibrate([1000, 1000, 1000, 1000], true); 
+      }
+    }
+  }
+});
+
 export default function ActiveNapScreen({ route, navigation }) {
   const { destination, radius } = route.params;
 
   const [currentDistance, setCurrentDistance] = useState(null);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
   
-  // Toggles
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [vibrateEnabled, setVibrateEnabled] = useState(true);
   
   const locationSubscription = useRef(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
 
+  // Sync React state to the global variable so the background task can see it
+  useEffect(() => {
+    backgroundNapSettings = { destination, radius, vibrateEnabled, soundEnabled };
+  }, [destination, radius, vibrateEnabled, soundEnabled]);
+
   // ==========================================
-  // 1. REAL-TIME TRACKING ENGINE
+  // 4. FOREGROUND TRACKING ENGINE
   // ==========================================
   useEffect(() => {
     let isMounted = true;
 
     const startTracking = async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        alert("Location permission is required to wake you up!");
+      const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
+      if (foregroundStatus !== 'granted') {
+        alert("Nappr needs foreground location to track your commute.");
         return;
       }
 
+      const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
+      if (backgroundStatus !== 'granted') {
+        alert("Warning: Without background permissions, Nappr will stop tracking if your screen turns off.");
+      }
+
+      // Foreground UI tracking
       locationSubscription.current = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
@@ -64,6 +116,20 @@ export default function ActiveNapScreen({ route, navigation }) {
           }
         }
       );
+
+      // Start the headless task if permitted
+      if (backgroundStatus === 'granted') {
+        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 5000,
+          distanceInterval: 10,
+          foregroundService: {
+            notificationTitle: "Nappr is Active",
+            notificationBody: "Monitoring your commute...",
+            notificationColor: theme.accentMint,
+          },
+        });
+      }
     };
 
     startTracking();
@@ -75,20 +141,16 @@ export default function ActiveNapScreen({ route, navigation }) {
       }
       stopAlarm(); 
     };
-  }, [isAlarmActive, soundEnabled, vibrateEnabled]); 
+  }, [isAlarmActive]); 
 
   // ==========================================
-  // 2. ALARM LOGIC (AUDIO BYPASSED)
+  // 5. ALARM & UI LOGIC
   // ==========================================
   const triggerAlarm = () => {
     setIsAlarmActive(true);
     
     if (vibrateEnabled) {
       Vibration.vibrate([1000, 1000], true);
-    }
-
-    if (soundEnabled) {
-      console.log("ALARM TRIGGERED: Sound is visually ON, but audio engine is bypassed.");
     }
 
     Animated.loop(
@@ -103,17 +165,21 @@ export default function ActiveNapScreen({ route, navigation }) {
     Vibration.cancel();
   };
 
-  const handleCancelNap = () => {
+  const handleCancelNap = async () => {
     stopAlarm();
+    backgroundNapSettings = null; // Tell the background task to stop caring
+    
     if (locationSubscription.current) {
       locationSubscription.current.remove();
+    }
+    
+    const started = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    if (started) {
+      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
     }
     navigation.goBack();
   };
 
-  // ==========================================
-  // 3. UI RENDERING
-  // ==========================================
   const displayDistance = currentDistance !== null ? currentDistance.toFixed(1) : "--";
   
   const backgroundColor = pulseAnim.interpolate({
@@ -126,7 +192,6 @@ export default function ActiveNapScreen({ route, navigation }) {
       
       <View style={styles.mainContent}>
         
-        {/* Top Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={handleCancelNap} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#666" />
@@ -134,23 +199,20 @@ export default function ActiveNapScreen({ route, navigation }) {
           <Text style={[styles.headerTitle, isAlarmActive && { color: theme.danger }]}>
             {isAlarmActive ? "WAKE UP!" : "APPROACHING"}
           </Text>
-          <View style={{ width: 24 }} /> {/* Spacer to perfectly center title */}
+          <View style={{ width: 24 }} /> 
         </View>
 
-        {/* Minimalist Typography Distance Readout */}
         <View style={styles.distanceWrapper}>
           <Text style={styles.distanceValue}>{displayDistance}</Text>
           <Text style={styles.distanceUnit}>km</Text>
         </View>
 
-        {/* MASSIVE SLEEP ICON CENTERED BELOW DISTANCE */}
         <View style={styles.moonContainer}>
           <Ionicons name="moon-outline" size={120} color="#1A1A1A" />
         </View>
 
       </View>
 
-      {/* BOTTOM CONTROLS (Toggles & Cancel) */}
       <View style={styles.bottomSection}>
         
         <View style={styles.togglesRow}>
@@ -163,7 +225,6 @@ export default function ActiveNapScreen({ route, navigation }) {
           </TouchableOpacity>
         </View>
 
-        {/* BOTTOM CANCEL BUTTON */}
         <View style={styles.bottomContainer}>
           <TouchableOpacity onPress={handleCancelNap} activeOpacity={0.6}>
             <Text style={[styles.cancelText, isAlarmActive && { color: theme.danger }]}>
@@ -181,26 +242,16 @@ export default function ActiveNapScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   mainContent: { flex: 1 },
-  
-  // HEADER
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 25, paddingTop: 60 },
   backButton: { padding: 5 },
   headerTitle: { color: theme.accentMint, fontSize: 16, fontWeight: '800', letterSpacing: 2 },
-  
-  // DISTANCE TYPOGRAPHY
   distanceWrapper: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center', marginTop: 80 },
   distanceValue: { color: '#FFFFFF', fontSize: 110, fontWeight: 'bold', includeFontPadding: false, tracking: -2 },
   distanceUnit: { color: '#888888', fontSize: 32, marginLeft: 8, fontWeight: '400' },
-  
-  // MOON GRAPHIC
   moonContainer: { alignItems: 'center', marginTop: 60 },
-  
-  // BOTTOM SECTION
   bottomSection: { paddingBottom: 60 },
   togglesRow: { flexDirection: 'row', justifyContent: 'center', gap: 60, paddingVertical: 20 },
   iconButton: { padding: 15 },
-  
-  // CANCEL BUTTON
   bottomContainer: { alignItems: 'center', marginTop: 10 },
   cancelText: { color: '#5A7580', fontSize: 13, fontWeight: 'bold', letterSpacing: 1 },
 });

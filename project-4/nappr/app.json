@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "nappr",
-    "slug": "expo-template-blank",
+    "slug": "nappr",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -9,12 +9,16 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "UIBackgroundModes": ["location", "audio"],
+        "UIBackgroundModes": [
+          "location",
+          "audio"
+        ],
         "NSLocationWhenInUseUsageDescription": "Nappr needs your location to track your commute and wake you up.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Nappr requires background tracking to trigger your alarm even when your phone is locked in your pocket."
       }
     },
     "android": {
+      "package": "com.nappr.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -30,6 +34,14 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Nappr to read your location in the background so the alarm can wake you up even when your phone is asleep."
+        }
+      ]
+    ]
   }
 }
