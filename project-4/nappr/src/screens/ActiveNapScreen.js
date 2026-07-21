@@ -16,11 +16,12 @@ const getDistanceKm = (lat1, lon1, lat2, lon2) => {
 };
 
 export default function ActiveNapScreen({ route, navigation }) {
-  const { destination, radius, isIntense } = route.params;
+  const { destination, radius } = route.params;
 
   const [currentDistance, setCurrentDistance] = useState(null);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
   
+  // Toggles
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [vibrateEnabled, setVibrateEnabled] = useState(true);
   
@@ -77,7 +78,7 @@ export default function ActiveNapScreen({ route, navigation }) {
   }, [isAlarmActive, soundEnabled, vibrateEnabled]); 
 
   // ==========================================
-  // 2. ALARM LOGIC (VIBRATION ONLY - AUDIO BYPASSED)
+  // 2. ALARM LOGIC (AUDIO BYPASSED)
   // ==========================================
   const triggerAlarm = () => {
     setIsAlarmActive(true);
@@ -87,7 +88,6 @@ export default function ActiveNapScreen({ route, navigation }) {
     }
 
     if (soundEnabled) {
-      // Audio engine removed to prevent crash. 
       console.log("ALARM TRIGGERED: Sound is visually ON, but audio engine is bypassed.");
     }
 
@@ -111,23 +111,6 @@ export default function ActiveNapScreen({ route, navigation }) {
     navigation.goBack();
   };
 
-  const toggleSound = () => {
-    const newVal = !soundEnabled;
-    setSoundEnabled(newVal);
-    if (isAlarmActive) {
-        console.log(`Sound toggled to ${newVal ? 'ON' : 'OFF'} during active alarm.`);
-    }
-  };
-
-  const toggleVibrate = () => {
-    const newVal = !vibrateEnabled;
-    setVibrateEnabled(newVal);
-    if (isAlarmActive) {
-      if (newVal) Vibration.vibrate([1000, 1000], true);
-      else Vibration.cancel();
-    }
-  };
-
   // ==========================================
   // 3. UI RENDERING
   // ==========================================
@@ -135,98 +118,89 @@ export default function ActiveNapScreen({ route, navigation }) {
   
   const backgroundColor = pulseAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [theme.background, 'rgba(255, 76, 76, 0.4)'] 
+    outputRange: ['#000000', 'rgba(255, 30, 30, 0.4)'] 
   });
 
   return (
     <Animated.View style={[styles.container, { backgroundColor }]}>
       
-      {/* Top Header */}
-      <View style={styles.header}>
-        <Ionicons name="shield-checkmark" size={24} color={isAlarmActive ? theme.danger : theme.accentMint} />
-        <Text style={styles.headerText}>
-          {isAlarmActive ? "WAKE UP!" : "NAPPR IS ACTIVE"}
-        </Text>
-      </View>
-
-      {/* Main Distance Readout */}
-      <View style={styles.distanceContainer}>
-        <Text style={styles.distanceValue}>{displayDistance}</Text>
-        <Text style={styles.distanceUnit}>KM TO DESTINATION</Text>
-      </View>
-
-      {/* Quick Toggles */}
-      <View style={styles.toggleRow}>
-        <TouchableOpacity 
-          style={[styles.toggleBtn, soundEnabled ? styles.toggleActive : styles.toggleInactive]} 
-          onPress={toggleSound}
-          activeOpacity={0.7}
-        >
-          <Ionicons name={soundEnabled ? "volume-high" : "volume-mute"} size={22} color={soundEnabled ? '#000' : '#FFF'} />
-          <Text style={[styles.toggleText, soundEnabled ? {color: '#000'} : {color: '#FFF'}]}>Sound</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.toggleBtn, vibrateEnabled ? styles.toggleActive : styles.toggleInactive]} 
-          onPress={toggleVibrate}
-          activeOpacity={0.7}
-        >
-          <Ionicons name={vibrateEnabled ? "phone-portrait" : "phone-portrait-outline"} size={22} color={vibrateEnabled ? '#000' : '#FFF'} />
-          <Text style={[styles.toggleText, vibrateEnabled ? {color: '#000'} : {color: '#FFF'}]}>Vibrate</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Geofence Data */}
-      <View style={styles.infoBox}>
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Wake-Up Radius:</Text>
-          <Text style={styles.infoData}>{radius.toFixed(1)} km</Text>
-        </View>
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Status:</Text>
-          <Text style={[styles.infoData, { color: isAlarmActive ? theme.danger : theme.accentMint }]}>
-            {isAlarmActive ? "ALARM RINGING" : "MONITORING"}
+      <View style={styles.mainContent}>
+        
+        {/* Top Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={handleCancelNap} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color="#666" />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, isAlarmActive && { color: theme.danger }]}>
+            {isAlarmActive ? "WAKE UP!" : "APPROACHING"}
           </Text>
+          <View style={{ width: 24 }} /> {/* Spacer to perfectly center title */}
         </View>
+
+        {/* Minimalist Typography Distance Readout */}
+        <View style={styles.distanceWrapper}>
+          <Text style={styles.distanceValue}>{displayDistance}</Text>
+          <Text style={styles.distanceUnit}>km</Text>
+        </View>
+
+        {/* MASSIVE SLEEP ICON CENTERED BELOW DISTANCE */}
+        <View style={styles.moonContainer}>
+          <Ionicons name="moon-outline" size={120} color="#1A1A1A" />
+        </View>
+
       </View>
 
-      {/* Big Cancel/Wake Up Button */}
-      <TouchableOpacity 
-        style={[styles.cancelButton, isAlarmActive && styles.wakeUpButton]} 
-        onPress={handleCancelNap}
-        activeOpacity={0.8}
-      >
-        <Ionicons name={isAlarmActive ? "alarm" : "close"} size={28} color={isAlarmActive ? '#FFF' : theme.danger} />
-        <Text style={[styles.cancelButtonText, isAlarmActive && { color: '#FFF' }]}>
-          {isAlarmActive ? "TURN OFF ALARM" : "CANCEL NAP"}
-        </Text>
-      </TouchableOpacity>
+      {/* BOTTOM CONTROLS (Toggles & Cancel) */}
+      <View style={styles.bottomSection}>
+        
+        <View style={styles.togglesRow}>
+          <TouchableOpacity onPress={() => setSoundEnabled(!soundEnabled)} style={styles.iconButton}>
+            <Ionicons name={soundEnabled ? "volume-high" : "volume-mute"} size={26} color={soundEnabled ? '#666' : '#222'} />
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => setVibrateEnabled(!vibrateEnabled)} style={styles.iconButton}>
+            <Ionicons name={vibrateEnabled ? "phone-portrait" : "phone-portrait-outline"} size={26} color={vibrateEnabled ? '#666' : '#222'} />
+          </TouchableOpacity>
+        </View>
+
+        {/* BOTTOM CANCEL BUTTON */}
+        <View style={styles.bottomContainer}>
+          <TouchableOpacity onPress={handleCancelNap} activeOpacity={0.6}>
+            <Text style={[styles.cancelText, isAlarmActive && { color: theme.danger }]}>
+              {isAlarmActive ? "STOP ALARM" : "CANCEL NAP"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+      </View>
 
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'space-between', paddingVertical: 60, paddingHorizontal: 20 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)', padding: 15, borderRadius: 20 },
-  headerText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold', letterSpacing: 2, marginLeft: 10 },
+  container: { flex: 1 },
+  mainContent: { flex: 1 },
   
-  distanceContainer: { alignItems: 'center', justifyContent: 'center', flex: 1 },
-  distanceValue: { color: '#FFFFFF', fontSize: 110, fontWeight: 'bold', includeFontPadding: false },
-  distanceUnit: { color: theme.textSecondary, fontSize: 18, letterSpacing: 3, marginTop: -10, fontWeight: '600' },
+  // HEADER
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 25, paddingTop: 60 },
+  backButton: { padding: 5 },
+  headerTitle: { color: theme.accentMint, fontSize: 16, fontWeight: '800', letterSpacing: 2 },
   
-  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20, paddingHorizontal: 10 },
-  toggleBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 15, borderRadius: 15, marginHorizontal: 5, borderWidth: 1 },
-  toggleActive: { backgroundColor: theme.accentMint, borderColor: theme.accentMint },
-  toggleInactive: { backgroundColor: 'rgba(255, 255, 255, 0.05)', borderColor: '#333' },
-  toggleText: { fontSize: 16, fontWeight: 'bold', marginLeft: 8 },
-
-  infoBox: { backgroundColor: theme.surface, borderRadius: 20, padding: 25, marginBottom: 30, borderWidth: 1, borderColor: '#222' },
-  infoRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 },
-  infoLabel: { color: theme.textSecondary, fontSize: 14 },
-  infoData: { color: '#FFFFFF', fontSize: 14, fontWeight: 'bold' },
+  // DISTANCE TYPOGRAPHY
+  distanceWrapper: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center', marginTop: 80 },
+  distanceValue: { color: '#FFFFFF', fontSize: 110, fontWeight: 'bold', includeFontPadding: false, tracking: -2 },
+  distanceUnit: { color: '#888888', fontSize: 32, marginLeft: 8, fontWeight: '400' },
   
-  cancelButton: { flexDirection: 'row', backgroundColor: 'rgba(255, 76, 76, 0.1)', height: 70, borderRadius: 35, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: theme.danger },
-  wakeUpButton: { backgroundColor: theme.danger, borderColor: theme.danger },
-  cancelButtonText: { color: theme.danger, fontSize: 18, fontWeight: 'bold', marginLeft: 10 },
+  // MOON GRAPHIC
+  moonContainer: { alignItems: 'center', marginTop: 60 },
+  
+  // BOTTOM SECTION
+  bottomSection: { paddingBottom: 60 },
+  togglesRow: { flexDirection: 'row', justifyContent: 'center', gap: 60, paddingVertical: 20 },
+  iconButton: { padding: 15 },
+  
+  // CANCEL BUTTON
+  bottomContainer: { alignItems: 'center', marginTop: 10 },
+  cancelText: { color: '#5A7580', fontSize: 13, fontWeight: 'bold', letterSpacing: 1 },
 });
