@@ -1,18 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Vibration, Animated } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Vibration, Animated, Modal, TextInput, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { theme } from '../theme/colors';
 
-// 1. DEFINE THE BACKGROUND TASK NAME
 const BACKGROUND_LOCATION_TASK = 'background-location-task';
+const STORAGE_KEY = '@nappr_saved_routes';
 
-// 2. GLOBAL SETTINGS FOR BACKGROUND TASK
-// This allows the headless task to know where you are going even when the screen is off.
 let backgroundNapSettings = null; 
 
-// MATHEMATICS: The Haversine Formula
 const getDistanceKm = (lat1, lon1, lat2, lon2) => {
   const R = 6371; 
   const dLat = (lat2 - lat1) * (Math.PI / 180);
@@ -23,36 +21,20 @@ const getDistanceKm = (lat1, lon1, lat2, lon2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-// ==========================================
-// 3. THE HEADLESS BACKGROUND TASK
-// This runs directly on the OS when the screen is black.
-// ==========================================
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
-  if (error) {
-    console.error("Background Location Error:", error);
-    return;
-  }
+  if (error) return;
   if (data && backgroundNapSettings) {
     const { locations } = data;
     const latestLocation = locations[0];
     const { destination, radius, vibrateEnabled } = backgroundNapSettings;
 
     const dist = getDistanceKm(
-      latestLocation.coords.latitude,
-      latestLocation.coords.longitude,
-      destination.latitude,
-      destination.longitude
+      latestLocation.coords.latitude, latestLocation.coords.longitude,
+      destination.latitude, destination.longitude
     );
 
-    console.log(`[Background] Distance: ${dist.toFixed(2)} km`);
-
-    // THE TRIGGER: If we breach the radius while in the background!
     if (dist <= radius) {
-      console.log("[Background] TARGET REACHED! Triggering Alarm.");
-      if (vibrateEnabled) {
-        // Continuous vibration pattern until canceled
-        Vibration.vibrate([1000, 1000, 1000, 1000], true); 
-      }
+      if (vibrateEnabled) Vibration.vibrate([1000, 1000, 1000, 1000], true); 
     }
   }
 });
@@ -66,63 +48,44 @@ export default function ActiveNapScreen({ route, navigation }) {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [vibrateEnabled, setVibrateEnabled] = useState(true);
   
+  // Save Route Modal State
+  const [isSaveModalVisible, setIsSaveModalVisible] = useState(false);
+  const [routeName, setRouteName] = useState('');
+  const [startName, setStartName] = useState('');
+  const [destName, setDestName] = useState('');
+  
   const locationSubscription = useRef(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
 
-  // Sync React state to the global variable so the background task can see it
   useEffect(() => {
     backgroundNapSettings = { destination, radius, vibrateEnabled, soundEnabled };
   }, [destination, radius, vibrateEnabled, soundEnabled]);
 
-  // ==========================================
-  // 4. FOREGROUND TRACKING ENGINE
-  // ==========================================
   useEffect(() => {
     let isMounted = true;
 
     const startTracking = async () => {
       const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
-      if (foregroundStatus !== 'granted') {
-        alert("Nappr needs foreground location to track your commute.");
-        return;
-      }
+      if (foregroundStatus !== 'granted') return;
 
       const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
-      if (backgroundStatus !== 'granted') {
-        alert("Warning: Without background permissions, Nappr will stop tracking if your screen turns off.");
-      }
 
-      // Foreground UI tracking
       locationSubscription.current = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 5000, 
-          distanceInterval: 10,
-        },
+        { accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 10 },
         (newLocation) => {
           if (!isMounted) return;
-
           const dist = getDistanceKm(
-            newLocation.coords.latitude,
-            newLocation.coords.longitude,
-            destination.latitude,
-            destination.longitude
+            newLocation.coords.latitude, newLocation.coords.longitude,
+            destination.latitude, destination.longitude
           );
-
           setCurrentDistance(dist);
-
-          if (dist <= radius && !isAlarmActive) {
-            triggerAlarm();
-          }
+          if (dist <= radius && !isAlarmActive) triggerAlarm();
         }
       );
 
-      // Start the headless task if permitted
       if (backgroundStatus === 'granted') {
         await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 5000,
-          distanceInterval: 10,
+          accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 10,
           foregroundService: {
             notificationTitle: "Nappr is Active",
             notificationBody: "Monitoring your commute...",
@@ -136,22 +99,14 @@ export default function ActiveNapScreen({ route, navigation }) {
 
     return () => {
       isMounted = false;
-      if (locationSubscription.current) {
-        locationSubscription.current.remove();
-      }
+      if (locationSubscription.current) locationSubscription.current.remove();
       stopAlarm(); 
     };
   }, [isAlarmActive]); 
 
-  // ==========================================
-  // 5. ALARM & UI LOGIC
-  // ==========================================
   const triggerAlarm = () => {
     setIsAlarmActive(true);
-    
-    if (vibrateEnabled) {
-      Vibration.vibrate([1000, 1000], true);
-    }
+    if (vibrateEnabled) Vibration.vibrate([1000, 1000], true);
 
     Animated.loop(
       Animated.sequence([
@@ -161,23 +116,44 @@ export default function ActiveNapScreen({ route, navigation }) {
     ).start();
   };
 
-  const stopAlarm = () => {
-    Vibration.cancel();
-  };
+  const stopAlarm = () => Vibration.cancel();
 
   const handleCancelNap = async () => {
     stopAlarm();
-    backgroundNapSettings = null; // Tell the background task to stop caring
-    
-    if (locationSubscription.current) {
-      locationSubscription.current.remove();
-    }
+    backgroundNapSettings = null; 
+    if (locationSubscription.current) locationSubscription.current.remove();
     
     const started = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-    if (started) {
-      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-    }
+    if (started) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
     navigation.goBack();
+  };
+
+  const handleSaveRoute = async () => {
+    if (!routeName || !startName || !destName) {
+      Alert.alert('Missing Info', 'Please fill out all fields.');
+      return;
+    }
+
+    const newRoute = {
+      id: Date.now().toString(),
+      name: routeName,
+      start: startName,
+      destination: destName,
+      radius: radius.toFixed(1),
+      destinationCoords: destination
+    };
+
+    try {
+      const existingRoutes = await AsyncStorage.getItem(STORAGE_KEY);
+      const parsedRoutes = existingRoutes ? JSON.parse(existingRoutes) : [];
+      const updatedRoutes = [...parsedRoutes, newRoute];
+      
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedRoutes));
+      setIsSaveModalVisible(false);
+      Alert.alert('Success', 'Route saved to your list!');
+    } catch (e) {
+      Alert.alert('Error', 'Failed to save route.');
+    }
   };
 
   const displayDistance = currentDistance !== null ? currentDistance.toFixed(1) : "--";
@@ -193,19 +169,26 @@ export default function ActiveNapScreen({ route, navigation }) {
       <View style={styles.mainContent}>
         
         <View style={styles.header}>
-          <TouchableOpacity onPress={handleCancelNap} style={styles.backButton}>
+          <TouchableOpacity onPress={handleCancelNap} style={styles.iconButtonSmall}>
             <Ionicons name="arrow-back" size={24} color="#666" />
           </TouchableOpacity>
+          
           <Text style={[styles.headerTitle, isAlarmActive && { color: theme.danger }]}>
             {isAlarmActive ? "WAKE UP!" : "APPROACHING"}
           </Text>
-          <View style={{ width: 24 }} /> 
+          
+          <TouchableOpacity onPress={() => setIsSaveModalVisible(true)} style={styles.iconButtonSmall}>
+            <Ionicons name="bookmark-outline" size={24} color="#666" />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.distanceWrapper}>
           <Text style={styles.distanceValue}>{displayDistance}</Text>
           <Text style={styles.distanceUnit}>km</Text>
         </View>
+
+        {/* MINIMALIST RADIUS DISPLAY */}
+        <Text style={styles.radiusSubtext}>ALARM SET AT {radius.toFixed(1)} KM</Text>
 
         <View style={styles.moonContainer}>
           <Ionicons name="moon-outline" size={120} color="#1A1A1A" />
@@ -214,7 +197,6 @@ export default function ActiveNapScreen({ route, navigation }) {
       </View>
 
       <View style={styles.bottomSection}>
-        
         <View style={styles.togglesRow}>
           <TouchableOpacity onPress={() => setSoundEnabled(!soundEnabled)} style={styles.iconButton}>
             <Ionicons name={soundEnabled ? "volume-high" : "volume-mute"} size={26} color={soundEnabled ? '#666' : '#222'} />
@@ -232,8 +214,52 @@ export default function ActiveNapScreen({ route, navigation }) {
             </Text>
           </TouchableOpacity>
         </View>
-
       </View>
+
+      {/* SLEEK SAVE MODAL */}
+      <Modal visible={isSaveModalVisible} animationType="slide" transparent={true} onRequestClose={() => setIsSaveModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Save Current Route</Text>
+                <TouchableOpacity onPress={() => setIsSaveModalVisible(false)}>
+                    <Ionicons name="close" size={28} color="#666" />
+                </TouchableOpacity>
+            </View>
+
+            <TextInput
+              style={styles.input}
+              placeholder="Route Name (e.g., Obando to PUP Manila)"
+              placeholderTextColor="#555"
+              value={routeName}
+              onChangeText={setRouteName}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Starting Point"
+              placeholderTextColor="#555"
+              value={startName}
+              onChangeText={setStartName}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Destination"
+              placeholderTextColor="#555"
+              value={destName}
+              onChangeText={setDestName}
+            />
+
+            <View style={styles.radiusLockContainer}>
+              <Ionicons name="lock-closed-outline" size={16} color={theme.accentMint} />
+              <Text style={styles.radiusLockText}>Radius locked at {radius.toFixed(1)} km</Text>
+            </View>
+
+            <TouchableOpacity style={styles.saveButton} onPress={handleSaveRoute}>
+              <Text style={styles.saveButtonText}>SAVE ROUTE</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
     </Animated.View>
   );
@@ -243,15 +269,31 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   mainContent: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 25, paddingTop: 60 },
-  backButton: { padding: 5 },
+  iconButtonSmall: { padding: 5 },
   headerTitle: { color: theme.accentMint, fontSize: 16, fontWeight: '800', letterSpacing: 2 },
+  
   distanceWrapper: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center', marginTop: 80 },
   distanceValue: { color: '#FFFFFF', fontSize: 110, fontWeight: 'bold', includeFontPadding: false, tracking: -2 },
   distanceUnit: { color: '#888888', fontSize: 32, marginLeft: 8, fontWeight: '400' },
-  moonContainer: { alignItems: 'center', marginTop: 60 },
+  
+  // NEW RADIUS TEXT STYLE
+  radiusSubtext: { color: '#444', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textAlign: 'center', marginTop: 5 },
+  
+  moonContainer: { alignItems: 'center', marginTop: 45 }, // Slightly reduced margin to account for new text
+  
   bottomSection: { paddingBottom: 60 },
   togglesRow: { flexDirection: 'row', justifyContent: 'center', gap: 60, paddingVertical: 20 },
   iconButton: { padding: 15 },
   bottomContainer: { alignItems: 'center', marginTop: 10 },
   cancelText: { color: '#5A7580', fontSize: 13, fontWeight: 'bold', letterSpacing: 1 },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#111', borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25, paddingBottom: 50, borderWidth: 1, borderColor: '#222' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25 },
+  modalTitle: { color: '#FFF', fontSize: 18, fontWeight: 'bold', letterSpacing: 1 },
+  input: { backgroundColor: '#1A1A1A', color: '#FFF', borderRadius: 12, padding: 18, marginBottom: 15, fontSize: 15 },
+  radiusLockContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 25, marginTop: 10 },
+  radiusLockText: { color: theme.accentMint, fontSize: 13, marginLeft: 8, letterSpacing: 0.5 },
+  saveButton: { backgroundColor: theme.accentMint, padding: 18, borderRadius: 15, alignItems: 'center' },
+  saveButtonText: { color: '#000', fontSize: 15, fontWeight: 'bold', letterSpacing: 1 },
 });
