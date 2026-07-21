@@ -77,11 +77,30 @@ export default function SettingsScreen() {
     );
   };
 
+  const handleOpenGithub = async () => {
+    const url = 'https://github.com/Isaac06272/nappr';
+    const supported = await Linking.canOpenURL(url);
+    if (supported) {
+      await Linking.openURL(url);
+    } else {
+      Alert.alert('Error', 'Could not open GitHub link.');
+    }
+  };
+
+  const handleAbout = () => {
+    Alert.alert(
+      "About Nappr",
+      "Nappr is a location-based commute alarm designed to wake you up right before your stop.\n\nBuilt for commuters who need to catch up on sleep without missing their destination.\n\nVersion: 1.0.0",
+      [{ text: "Close", style: "default" }]
+    );
+  };
+
   const SettingRow = ({ icon, title, value, type = 'chevron', onPress, onToggle }) => (
     <TouchableOpacity 
       style={styles.settingRow} 
       activeOpacity={type === 'switch' ? 1 : 0.7}
       onPress={onPress}
+      disabled={!onPress && type !== 'switch'}
     >
       <View style={styles.settingLeft}>
         <View style={styles.iconContainer}>
@@ -165,9 +184,20 @@ export default function SettingsScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionHeader}>SUPPORT</Text>
         <View style={styles.card}>
-          <SettingRow icon="help-circle" title="Help & Feedback" type="chevron" />
+          <SettingRow 
+            icon="logo-github" 
+            title="View Source Code" 
+            type="chevron" 
+            onPress={handleOpenGithub}
+          />
           <View style={styles.divider} />
-          <SettingRow icon="information-circle" title="About Nappr" value="v1.0.0" type="text" />
+          <SettingRow 
+            icon="information-circle" 
+            title="About Nappr" 
+            value="v1.0.0" 
+            type="text" 
+            onPress={handleAbout}
+          />
         </View>
       </View>
     </ScrollView>
