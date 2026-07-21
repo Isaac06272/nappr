@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, FlatList, TouchableOpacity, Alert } from 'react-native';
+import { StyleSheet, View, Text, FlatList, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { theme } from '../theme/colors';
@@ -30,28 +30,6 @@ export default function HistoryScreen({ navigation }) {
 
     return unsubscribe;
   }, [navigation]);
-
-  const handleClearHistory = () => {
-    Alert.alert(
-      "Clear History",
-      "Are you sure you want to delete all your nap history? This cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { 
-          text: "Delete", 
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await AsyncStorage.removeItem(HISTORY_STORAGE_KEY);
-              setHistoryData([]); 
-            } catch (e) {
-              Alert.alert("Error", "Failed to clear history.");
-            }
-          }
-        }
-      ]
-    );
-  };
 
   const renderHistoryCard = ({ item }) => {
     const isCompleted = item.status === 'Completed';
@@ -112,11 +90,6 @@ export default function HistoryScreen({ navigation }) {
     <View style={styles.container}>
       <View style={styles.headerRow}>
         <Text style={styles.headerTitle}>Nap History</Text>
-        {historyData.length > 0 && (
-          <TouchableOpacity onPress={handleClearHistory} style={styles.clearButton} activeOpacity={0.6}>
-            <Ionicons name="trash-outline" size={24} color={theme.danger} />
-          </TouchableOpacity>
-        )}
       </View>
 
       <FlatList 
@@ -124,7 +97,6 @@ export default function HistoryScreen({ navigation }) {
         keyExtractor={item => item.id}
         renderItem={renderHistoryCard}
         ListEmptyComponent={renderEmptyState}
-        // FIX: Replaced { flex: 1 } with flexGrow and justifyContent logic for the empty state
         contentContainerStyle={historyData.length === 0 ? styles.emptyListContainer : styles.listContainer}
         showsVerticalScrollIndicator={false}
         scrollEnabled={historyData.length > 0} 
@@ -137,10 +109,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.background, paddingTop: 60 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 20 },
   headerTitle: { color: theme.textPrimary, fontSize: 28, fontWeight: 'bold' },
-  clearButton: { padding: 8, marginRight: -8 },
   listContainer: { paddingHorizontal: 20, paddingBottom: 100 },
   
-  // NEW: specific container style to strictly center the empty component
   emptyListContainer: { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
   
   card: { backgroundColor: theme.surface, borderRadius: 15, padding: 20, marginBottom: 15, width: '100%' },
@@ -160,7 +130,6 @@ const styles = StyleSheet.create({
   footerItem: { flexDirection: 'row', alignItems: 'center', marginRight: 25 },
   footerText: { color: theme.textSecondary, fontSize: 14, marginLeft: 6 },
   
-  // FIX: Removed flex: 1 and margins here since the parent container now handles centering
   emptyContainer: { alignItems: 'center', paddingBottom: 60 }, 
   emptyText: { color: theme.textPrimary, fontSize: 18, fontWeight: 'bold', marginTop: 15 },
   emptySubtext: { color: theme.textSecondary, fontSize: 14, marginTop: 8, textAlign: 'center', paddingHorizontal: 40 },
